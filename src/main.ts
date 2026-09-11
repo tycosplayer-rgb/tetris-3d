@@ -162,7 +162,7 @@ document.addEventListener(
   { passive: false },
 );
 
-showOverlay('3D Tetris', 'Swipe to move (camera-aligned) · Tap to rotate in-plane', 'Start');
+showOverlay('3D Tetris', 'Swipe to move · Tap to rotate · Swipe down to hard drop', 'Start');
 syncView();
 
 function frame(now: number): void {
