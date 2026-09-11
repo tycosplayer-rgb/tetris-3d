@@ -43,16 +43,15 @@ export class GameRenderer {
     const cx = SIZE / 2;
     const cy = HEIGHT / 2;
     const cz = SIZE / 2;
-    // Center on mid-well; framing tuned so the full tower fits with HUD/controls.
-    this.camTarget = new THREE.Vector3(cx, cy * 0.55, cz);
+    // Midpoint framing between the previous (large) and last (too small) zoom.
+    this.camTarget = new THREE.Vector3(cx, cy * 0.62, cz);
 
-    // Pull back further + wider FOV so nothing clips the viewport edges.
-    this.camera = new THREE.PerspectiveCamera(58, 1, 0.1, 300);
+    this.camera = new THREE.PerspectiveCamera(54, 1, 0.1, 280);
     // Elevated view from +X/+Z corner so both footprint axes are visible.
-    this.camera.position.set(cx + SIZE * 2.35, HEIGHT * 1.55, cz + SIZE * 2.65);
+    this.camera.position.set(cx + SIZE * 2.1, HEIGHT * 1.4, cz + SIZE * 2.35);
     this.camera.lookAt(this.camTarget);
 
-    this.scene.fog = new THREE.Fog(0x0b1020, 50, 110);
+    this.scene.fog = new THREE.Fog(0x0b1020, 45, 95);
 
     const amb = new THREE.AmbientLight(0x8899bb, 0.55);
     const dir = new THREE.DirectionalLight(0xffffff, 1.05);
@@ -140,7 +139,7 @@ export class GameRenderer {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // Slight downward bias so the top of the well clears the HUD.
-    const shiftY = Math.round(h * 0.08);
+    const shiftY = Math.round(h * 0.09);
     this.camera.setViewOffset(w, h + shiftY, 0, 0, w, h);
     this.camera.updateProjectionMatrix();
   }
