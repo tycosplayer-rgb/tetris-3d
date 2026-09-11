@@ -43,14 +43,16 @@ export class GameRenderer {
     const cx = SIZE / 2;
     const cy = HEIGHT / 2;
     const cz = SIZE / 2;
-    this.camTarget = new THREE.Vector3(cx, cy * 0.45, cz);
+    // Aim slightly below mid-height so HUD/controls leave room for the full well.
+    this.camTarget = new THREE.Vector3(cx, cy * 0.38, cz);
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
+    // Wider FOV + pulled-back camera so blocks read smaller and stay on-screen.
+    this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 250);
     // Elevated view from +X/+Z corner so both footprint axes are visible.
-    this.camera.position.set(cx + SIZE * 1.35, HEIGHT * 1.15, cz + SIZE * 1.55);
+    this.camera.position.set(cx + SIZE * 1.85, HEIGHT * 1.45, cz + SIZE * 2.1);
     this.camera.lookAt(this.camTarget);
 
-    this.scene.fog = new THREE.Fog(0x0b1020, 28, 55);
+    this.scene.fog = new THREE.Fog(0x0b1020, 40, 85);
 
     const amb = new THREE.AmbientLight(0x8899bb, 0.55);
     const dir = new THREE.DirectionalLight(0xffffff, 1.05);
