@@ -29,8 +29,6 @@ const TAP_MAX_MS = 280;
 const TAP_MAX_DIST = 18;
 const SWIPE_THRESHOLD = 28;
 const STEP_PX = 36;
-/** Downward travel (px) in one gesture that triggers hard drop. */
-const HARD_DROP_PX = 52;
 
 export class InputController {
   private axis: AxisMap = {
@@ -47,7 +45,6 @@ export class InputController {
   private accX = 0;
   private accY = 0;
   private moved = false;
-  private hardDropped = false;
 
   private readonly onContextMenu = (e: Event): void => {
     e.preventDefault();
@@ -100,7 +97,6 @@ export class InputController {
     this.accX = 0;
     this.accY = 0;
     this.moved = false;
-    this.hardDropped = false;
     try {
       this.target.setPointerCapture?.(e.pointerId);
     } catch {
@@ -113,16 +109,6 @@ export class InputController {
     const dx = e.clientX - this.startX;
     const dy = e.clientY - this.startY;
     if (Math.hypot(dx, dy) > TAP_MAX_DIST) this.moved = true;
-
-    // Swipe down (screen) → hard drop once per gesture.
-    if (!this.hardDropped && dy >= HARD_DROP_PX && dy >= Math.abs(dx)) {
-      this.hardDropped = true;
-      this.moved = true;
-      this.handlers.onHardDrop();
-      this.accX = dx;
-      this.accY = dy;
-      return;
-    }
 
     const stepDx = dx - this.accX;
     const stepDy = dy - this.accY;
@@ -142,12 +128,7 @@ export class InputController {
 
     if (!this.moved && dist <= TAP_MAX_DIST && dt <= TAP_MAX_MS) {
       this.handlers.onRotate();
-    } else if (
-      !this.hardDropped &&
-      dist >= SWIPE_THRESHOLD &&
-      this.accX === 0 &&
-      this.accY === 0
-    ) {
+    } else if (dist >= SWIPE_THRESHOLD && this.accX === 0 && this.accY === 0) {
       this.emitSwipe(dx, dy);
     }
 
@@ -155,14 +136,10 @@ export class InputController {
   }
 
   private emitSwipe(dx: number, dy: number): void {
-    if (this.hardDropped) return;
     if (Math.abs(dx) >= Math.abs(dy)) {
       this.handlers.onMove(dx < 0 ? 'left' : 'right');
-    } else if (dy < 0) {
-      this.handlers.onMove('forward');
     } else {
-      // Short screen-down before hard-drop threshold: move "back" on the ground plane.
-      this.handlers.onMove('back');
+      this.handlers.onMove(dy < 0 ? 'forward' : 'back');
     }
   }
 

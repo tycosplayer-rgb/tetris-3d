@@ -25,7 +25,6 @@ npm run preview
 | Input | Action |
 |-------|--------|
 | **Swipe / drag** | Move on the footprint (XZ). Directions match the **tilted camera**: screen-left = left from your view, screen-up = deeper into the well. |
-| **Swipe down** | **Hard drop** (once per gesture once the swipe is long enough). |
 | **Tap / click** | Rotate **in-plane only** (XY pieces rotate in XY; XZ pieces rotate in XZ). No free 3D tumbling. |
 | **↓ Soft** (hold) / Arrow Down / S | Soft drop |
 | **⬇ Hard** / Space | Hard drop |
