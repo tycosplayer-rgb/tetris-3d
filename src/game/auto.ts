@@ -236,7 +236,8 @@ function ridgeStackPenalty(piece: ActivePiece, heights: Int16Array): number {
     if (piece.plane === 'XZ' && h > 0 && h <= avg) penalty -= 25;
   }
   // Classic failure mode: whole I-bar sits on the same ridge (4 cells @ center).
-  if (piece.plane === 'XZ' && onMax >= 3) penalty += 900;
+  if (piece.type === 'I' && piece.plane === 'XZ' && onMax >= 2) penalty += 1600;
+  if (piece.plane === 'XZ' && onMax >= 3) penalty += 1200;
   return penalty;
 }
 
@@ -273,6 +274,100 @@ function lowestLayerFillBonus(before: Board, piece: ActivePiece): number {
     if (c.y > targetY) wastedHigh++;
   }
   return covered * 220 - wastedHigh * 160;
+}
+
+
+/** Columns that look like vertical slots (neighbors taller by ≥2). */
+function wellColumns(heights: Int16Array): Set<string> {
+  const wells = new Set<string>();
+  for (let z = 0; z < SIZE; z++) {
+    for (let x = 0; x < SIZE; x++) {
+      const h = heights[z * SIZE + x];
+      const neigh: number[] = [];
+      if (x > 0) neigh.push(heights[z * SIZE + (x - 1)]);
+      if (x + 1 < SIZE) neigh.push(heights[z * SIZE + (x + 1)]);
+      if (z > 0) neigh.push(heights[(z - 1) * SIZE + x]);
+      if (z + 1 < SIZE) neigh.push(heights[(z + 1) * SIZE + x]);
+      if (neigh.length === 0) continue;
+      const nMin = Math.min(...neigh);
+      const nMax = Math.max(...neigh);
+      // Deep slot between taller stacks, or low column with a tall neighbor.
+      if (nMin >= h + 2 || (h <= 2 && nMax >= h + 3)) {
+        wells.add(`${x},${z}`);
+      }
+    }
+  }
+  return wells;
+}
+
+/**
+ * I-piece policy:
+ * - XY: prefer 竖条 (span Y in one column), especially into well slots.
+ * - XY horizontal while wells exist: heavy penalty (this was the bug in screenshots).
+ * - XZ: cannot become 竖条 (plane locked); still avoid stacking into a standing wall.
+ */
+function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): number {
+  if (piece.type !== 'I') return 0;
+  const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
+  const cols = new Set(cells.map((c) => `${c.x},${c.z}`));
+  const ys = new Set(cells.map((c) => c.y));
+  const wells = wellColumns(heights);
+  const isVertical = piece.plane === 'XY' && cols.size === 1 && ys.size >= 3;
+  const isFlatBar = ys.size <= 2 && cols.size >= 3;
+
+  if (piece.plane === 'XY') {
+    if (isVertical) {
+      const key = [...cols][0]!;
+      let bonus = 1100;
+      if (wells.has(key)) bonus += 1400;
+      // Standing in a truly empty/low column is also good early game.
+      const h = heights[Number(key.split(',')[1]) * SIZE + Number(key.split(',')[0])];
+      bonus += (5 - h) * 80;
+      // Clear sky above landing: no holes in this column under the piece.
+      const [cx, cz] = key.split(',').map(Number) as [number, number];
+      let buried = false;
+      for (let y = 0; y < Math.min(...ys); y++) {
+        if (before.cells[y][cz][cx] === null) {
+          buried = true;
+          break;
+        }
+      }
+      // For vertical I sitting on floor/stack, empty cells under minY mean a hole — bad.
+      // Actually if minY>0 and cells below empty, that's floating/hole. fits() prevents float.
+      if (buried) bonus -= 500;
+      return bonus;
+    }
+    if (isFlatBar) {
+      // Horizontal long bar while 竖槽 exist → exactly the bad habit from screenshots.
+      let penalty = -400;
+      if (wells.size > 0) penalty -= 1600;
+      // Extra: if this bar sits on a tall line, crush it.
+      let tallHits = 0;
+      let maxH = 0;
+      for (let i = 0; i < heights.length; i++) if (heights[i] > maxH) maxH = heights[i];
+      for (const key of cols) {
+        const [x, z] = key.split(',').map(Number) as [number, number];
+        if (heights[z * SIZE + x] >= Math.max(2, maxH - 1)) tallHits++;
+      }
+      if (tallHits >= 3) penalty -= 1200;
+      return penalty;
+    }
+  }
+
+  if (piece.plane === 'XZ' && isFlatBar) {
+    // Flat-only I: reward threading a low 4-wide empty corridor; punish climbing.
+    let emptyLow = 0;
+    for (const c of cells) {
+      if (c.y <= 1 && before.cells[c.y][c.z][c.x] === null) emptyLow++;
+    }
+    let score = emptyLow * 90;
+    if (Math.min(...ys) >= 2) score -= 700;
+    // If many wells exist, flat I is usually worse than waiting — mild push to low fill only.
+    if (wells.size >= 3 && Math.min(...ys) >= 1) score -= 500;
+    return score;
+  }
+
+  return 0;
 }
 
 /**
@@ -365,6 +460,7 @@ function evaluateBoard(
     place -= ridgeStackPenalty(piece, heightsBefore);
     place += lowestLayerFillBonus(before, piece);
     place += verticalStripBonus(before, piece, heightsBefore);
+    place += longBarBonus(before, piece, heightsBefore);
     if (piece.plane === 'XZ') {
       // Flat pieces should extend the lowest shelf, not climb the wall.
       place -= landingY * 100;
