@@ -59,7 +59,7 @@ function updateHud(): void {
         ? '半自动'
         : playMode === 'full'
           ? '自动'
-          : '训练';
+          : '自动训练';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -127,7 +127,7 @@ function togglePause(): void {
         : playMode === 'full'
           ? '自动已暂停'
           : playMode === 'train'
-            ? '训练已暂停（仅长条）'
+            ? '自动训练已暂停（仅长条）'
             : 'Swipe · Tap rotate · Flip button';
     showOverlay('Paused', pauseHint, 'Resume');
     btnPause.textContent = 'Resume';
@@ -345,7 +345,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  '按钮：手动 / 半自动 / 自动 / 训练（训练=仅长条+CPU）',
+  '按钮：手动 / 半自动 / 自动 / 自动训练（仅长条+CPU）',
   'Start',
 );
 syncView();
