@@ -1,3 +1,4 @@
+import { findBestPlacement, type Placement } from './game/auto';
 import { Engine } from './game/engine';
 import { InputController, axisMapFromCamera, type MoveDir } from './game/input';
 import { GameRenderer } from './game/render';
@@ -11,6 +12,7 @@ const overlay = document.querySelector('#overlay')!;
 const overlayTitle = document.querySelector('#overlay-title')!;
 const overlayMsg = document.querySelector('#overlay-msg')!;
 const btnStart = document.querySelector('#btn-start')!;
+const btnAuto = document.querySelector<HTMLButtonElement>('#btn-auto')!;
 const btnSoft = document.querySelector('#btn-soft')!;
 const btnHard = document.querySelector('#btn-hard')!;
 const btnPause = document.querySelector('#btn-pause')!;
@@ -24,11 +26,25 @@ let dropAcc = 0;
 let lastT = performance.now();
 let needsSync = true;
 
+let autoMode = false;
+let autoTarget: Placement | null = null;
+let autoPieceKey = '';
+let autoAcc = 0;
+const AUTO_STEP_MS = 55;
+
+function pieceKey(): string {
+  const a = engine.active;
+  if (!a) return '';
+  return `${a.type}:${a.plane}:${engine.stats.lines}:${engine.stats.score}`;
+}
+
 function updateHud(): void {
   scoreEl.textContent = String(engine.stats.score);
   linesEl.textContent = String(engine.stats.lines);
   levelEl.textContent = String(engine.stats.level);
   nextEl.textContent = engine.nextLabel();
+  btnAuto.classList.toggle('active', autoMode);
+  btnAuto.textContent = autoMode ? 'Auto ON' : 'Auto';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -49,13 +65,13 @@ function syncView(): void {
 }
 
 function move(dir: MoveDir): void {
-  if (engine.phase !== 'playing') return;
+  if (autoMode || engine.phase !== 'playing') return;
   const { dx, dz } = input.dirToDelta(dir);
   if (engine.tryMove(dx, 0, dz)) needsSync = true;
 }
 
 function rotate(): void {
-  if (engine.phase !== 'playing') return;
+  if (autoMode || engine.phase !== 'playing') return;
   if (engine.tryRotate()) needsSync = true;
 }
 
@@ -70,6 +86,9 @@ function startGame(): void {
   btnPause.textContent = 'Pause';
   dropAcc = 0;
   softDropping = false;
+  autoTarget = null;
+  autoPieceKey = '';
+  autoAcc = 0;
   needsSync = true;
   refreshAxis();
 }
@@ -82,7 +101,7 @@ function togglePause(): void {
   if (engine.phase === 'ready' || engine.phase === 'over') return;
   engine.togglePause();
   if (engine.phase === 'paused') {
-    showOverlay('Paused', 'Swipe to move · Tap to rotate', 'Resume');
+    showOverlay('Paused', autoMode ? 'Auto paused' : 'Swipe to move · Tap to rotate', 'Resume');
     btnPause.textContent = 'Resume';
   } else {
     hideOverlay();
@@ -91,24 +110,101 @@ function togglePause(): void {
   }
 }
 
-
 function maybeGameOver(): void {
   if (engine.phase === 'over') {
+    autoTarget = null;
     showOverlay('Game Over', `Score ${engine.stats.score} · Lines ${engine.stats.lines}`, 'Restart');
   }
+}
+
+function setAutoMode(on: boolean): void {
+  autoMode = on;
+  autoTarget = null;
+  autoPieceKey = '';
+  autoAcc = 0;
+  softDropping = false;
+  updateHud();
+  if (autoMode && (engine.phase === 'ready' || engine.phase === 'over')) {
+    startGame();
+  }
+}
+
+function ensureAutoTarget(): void {
+  const a = engine.active;
+  if (!a) {
+    autoTarget = null;
+    autoPieceKey = '';
+    return;
+  }
+  const key = pieceKey();
+  if (autoTarget && autoPieceKey === key) return;
+  autoTarget = findBestPlacement(engine.board, a.type, a.plane, engine.stats.level);
+  autoPieceKey = key;
+}
+
+/** One auto step: rotate / slide / hard-drop toward best placement. */
+function autoStep(): void {
+  if (!autoMode || engine.phase !== 'playing' || !engine.active) return;
+  ensureAutoTarget();
+  const a = engine.active;
+  const t = autoTarget;
+  if (!t) {
+    engine.hardDrop();
+    needsSync = true;
+    autoTarget = null;
+    maybeGameOver();
+    return;
+  }
+
+  if (a.rotation !== t.rotation) {
+    if (!engine.tryRotate()) {
+      engine.hardDrop();
+      autoTarget = null;
+      maybeGameOver();
+    }
+    needsSync = true;
+    return;
+  }
+
+  const dx = Math.sign(t.x - a.x);
+  const dz = Math.sign(t.z - a.z);
+  if (dx !== 0 || dz !== 0) {
+    let moved = false;
+    if (Math.abs(t.x - a.x) >= Math.abs(t.z - a.z)) {
+      if (dx !== 0) moved = engine.tryMove(dx, 0, 0);
+      if (!moved && dz !== 0) moved = engine.tryMove(0, 0, dz);
+    } else {
+      if (dz !== 0) moved = engine.tryMove(0, 0, dz);
+      if (!moved && dx !== 0) moved = engine.tryMove(dx, 0, 0);
+    }
+    if (!moved) {
+      engine.hardDrop();
+      autoTarget = null;
+      maybeGameOver();
+    }
+    needsSync = true;
+    return;
+  }
+
+  engine.hardDrop();
+  autoTarget = null;
+  autoPieceKey = '';
+  needsSync = true;
+  maybeGameOver();
 }
 
 const input = new InputController(canvas, {
   onMove: move,
   onRotate: rotate,
   onSoftDropStart: () => {
+    if (autoMode) return;
     softDropping = true;
   },
   onSoftDropEnd: () => {
     softDropping = false;
   },
   onHardDrop: () => {
-    if (engine.phase !== 'playing') return;
+    if (autoMode || engine.phase !== 'playing') return;
     engine.hardDrop();
     needsSync = true;
     maybeGameOver();
@@ -131,14 +227,19 @@ btnStart.addEventListener('click', () => {
 btnRestart.addEventListener('click', restartGame);
 btnPause.addEventListener('click', togglePause);
 
+btnAuto.addEventListener('click', () => {
+  setAutoMode(!autoMode);
+});
+
 btnHard.addEventListener('click', () => {
-  if (engine.phase !== 'playing') return;
+  if (autoMode || engine.phase !== 'playing') return;
   engine.hardDrop();
   needsSync = true;
   maybeGameOver();
 });
 
 btnSoft.addEventListener('pointerdown', (e) => {
+  if (autoMode) return;
   e.preventDefault();
   softDropping = true;
 });
@@ -162,7 +263,11 @@ document.addEventListener(
   { passive: false },
 );
 
-showOverlay('3D Tetris', 'Swipe to move (camera-aligned) · Tap to rotate · Hard drop via button', 'Start');
+showOverlay(
+  '3D Tetris',
+  'Swipe to move · Tap to rotate · Auto lets the CPU play for score',
+  'Start',
+);
 syncView();
 
 function frame(now: number): void {
@@ -170,15 +275,25 @@ function frame(now: number): void {
   lastT = now;
 
   if (engine.phase === 'playing') {
-    const interval = softDropping ? Math.min(80, engine.dropMs / 8) : engine.dropMs;
-    dropAcc += dt;
-    while (dropAcc >= interval) {
-      dropAcc -= interval;
-      if (engine.phase !== 'playing') break;
-      engine.tickGravity();
-      needsSync = true;
-      maybeGameOver();
-      if (engine.phase !== 'playing') break;
+    if (autoMode) {
+      autoAcc += dt;
+      while (autoAcc >= AUTO_STEP_MS) {
+        autoAcc -= AUTO_STEP_MS;
+        if (engine.phase !== 'playing') break;
+        autoStep();
+        if (engine.phase !== 'playing') break;
+      }
+    } else {
+      const interval = softDropping ? Math.min(80, engine.dropMs / 8) : engine.dropMs;
+      dropAcc += dt;
+      while (dropAcc >= interval) {
+        dropAcc -= interval;
+        if (engine.phase !== 'playing') break;
+        engine.tickGravity();
+        needsSync = true;
+        maybeGameOver();
+        if (engine.phase !== 'playing') break;
+      }
     }
   }
 

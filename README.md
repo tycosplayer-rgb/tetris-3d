@@ -27,7 +27,8 @@ npm run preview
 | **Swipe / drag** | Move on the footprint (XZ). Directions match the **tilted camera**: screen-left = left from your view, screen-up = deeper into the well. |
 | **Tap / click** | Rotate **in-plane only** (XY pieces rotate in XY; XZ pieces rotate in XZ). No free 3D tumbling. |
 | **↓ Soft** (hold) / Arrow Down / S | Soft drop |
-| **⬇ Hard** / Space | Hard drop |
+| **Auto** | CPU plays: seeks clears / score while keeping the stack survivable |
+| **⬇ Hard** / Space | Hard drop (manual only; disabled while Auto is on) |
 | **Pause** / P | Pause / resume |
 | **Restart** / R | New game |
 

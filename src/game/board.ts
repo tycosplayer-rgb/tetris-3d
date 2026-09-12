@@ -22,7 +22,19 @@ export class Board {
     }
   }
 
-  inBounds(x: number, y: number, z: number): boolean {
+  clone(): Board {
+    const b = new Board();
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let z = 0; z < SIZE; z++) {
+        for (let x = 0; x < SIZE; x++) {
+          b.cells[y][z][x] = this.cells[y][z][x];
+        }
+      }
+    }
+    return b;
+  }
+
+    inBounds(x: number, y: number, z: number): boolean {
     return x >= 0 && x < SIZE && y >= 0 && y < HEIGHT && z >= 0 && z < SIZE;
   }
 
