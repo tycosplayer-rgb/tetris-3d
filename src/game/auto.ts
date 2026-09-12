@@ -275,7 +275,10 @@ function lowestLayerFillBonus(before: Board, piece: ActivePiece): number {
     if (c.y === targetY && before.cells[c.y][c.z][c.x] === null) covered++;
     if (c.y > targetY) wastedHigh++;
   }
-  return covered * 220 - wastedHigh * 160;
+  // Keep mild weights for non-I (T/L/J often span 2 rows). Stronger only for I.
+  const coverW = piece.type === 'I' ? 400 : 220;
+  const wasteW = piece.type === 'I' ? 280 : 160;
+  return covered * coverW - wastedHigh * wasteW;
 }
 
 
@@ -303,9 +306,36 @@ function wellColumns(heights: Int16Array): Set<string> {
 }
 
 
+/** Lowest Y that still has empty cells (incomplete or brand-new layer). */
+function lowestIncompleteY(before: Board): number {
+  for (let y = 0; y < HEIGHT; y++) {
+    let filled = 0;
+    let empty = 0;
+    for (let z = 0; z < SIZE; z++) {
+      for (let x = 0; x < SIZE; x++) {
+        if (before.cells[y][z][x] !== null) filled++;
+        else empty++;
+      }
+    }
+    if (empty > 0) return y; // includes fully empty layers
+    void filled;
+  }
+  return HEIGHT - 1;
+}
+
+function countEmptyOnLayer(before: Board, y: number): number {
+  let empty = 0;
+  for (let z = 0; z < SIZE; z++) {
+    for (let x = 0; x < SIZE; x++) {
+      if (before.cells[y][z][x] === null) empty++;
+    }
+  }
+  return empty;
+}
+
 /**
- * Lying I-bar scoring. Crush "横躺一直往上放" (flat planks stacked into a tower).
- * Flat I is only OK when covering empty cells on the bottom — never climbing a shelf.
+ * Lying I-bar: primary way to complete an XZ layer.
+ * Crush stacking flat planks into a tower; reward covering empties on the lowest layer.
  */
 function scoreFlatIBar(
   before: Board,
@@ -313,7 +343,7 @@ function scoreFlatIBar(
   cells: { x: number; y: number; z: number }[],
   heights: Int16Array,
   maxH: number,
-  avg: number,
+  _avg: number,
 ): number {
   const cols = new Map<string, number>();
   for (const c of cells) {
@@ -324,39 +354,44 @@ function scoreFlatIBar(
   const minCol = Math.min(...colHs);
   const maxCol = Math.max(...colHs);
   const landingY = Math.min(...cells.map((c) => c.y));
+  const targetY = lowestIncompleteY(before);
 
-  let emptyLow = 0;
+  let coverTarget = 0;
   let onFilled = 0;
   for (const c of cells) {
-    if (before.cells[c.y][c.z][c.x] === null && c.y <= 1) emptyLow++;
+    if (c.y === targetY && before.cells[c.y][c.z][c.x] === null) coverTarget++;
     if (c.y > 0 && before.cells[c.y - 1][c.z][c.x] !== null) onFilled++;
   }
 
   // Absolute veto: lying bar climbing / stacking on an existing ridge.
-  if (minCol >= 1 && onFilled >= Math.max(3, cells.length - 1)) {
+  if (minCol >= 1 && onFilled >= Math.max(3, cells.length - 1) && landingY > targetY) {
     return -8000 - minCol * 600;
   }
-  if (cols.size >= 3 && minCol >= 1 && maxCol === minCol && landingY >= minCol) {
+  if (cols.size >= 3 && minCol >= 1 && maxCol === minCol && landingY >= minCol && landingY > targetY) {
     return -9000 - minCol * 700;
   }
-  if (landingY >= 2) return -5000 - landingY * 800;
-  if (minCol >= 2) return -6000;
-
-  // Floor-only flat fill — weak reward (standing up is preferred).
-  let score = emptyLow * 60;
-  for (const h of colHs) {
-    if (h === 0) score += 50;
+  if (landingY > targetY + 0) {
+    // Don't start a new storey while the lower layer still has holes.
+    if (countEmptyOnLayer(before, targetY) > 0 && landingY > targetY) {
+      return -7000 - (landingY - targetY) * 900;
+    }
   }
-  if (maxH >= 3) score -= 400; // when a tower exists, don't lay more flat seeds
-  if (avg >= 1.5) score -= 200;
+  if (minCol >= 2 && landingY >= 2 && landingY > targetY) return -6000;
+
+  // Strong reward: cover empties on the lowest incomplete layer (layer-clear path).
+  let score = coverTarget * 900;
+  if (coverTarget === cells.length && landingY === targetY) score += 1200;
+  // Mild preference for even corridors on the same shelf height.
+  if (maxCol - minCol <= 1 && landingY === targetY) score += 200;
+  if (maxH >= 6 && landingY >= 4) score -= 500;
   return score;
 }
 
 /**
- * I-piece policy:
- * Default = stand it up (XY vertical) in a short/empty column.
- * Flat lying is last resort for bottom empty corridors only.
- * Never stack flat bars into a skyscraper.
+ * I-piece policy (layer-first):
+ * Prefer flat bars that fill the lowest incomplete XZ layer.
+ * Vertical I only for true wells / last-column rescue — not for "plant a pillar farm".
+ * Never stack flat bars into a skyscraper above open holes.
  */
 function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): number {
   if (piece.type !== 'I') return 0;
@@ -366,14 +401,14 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
   const wells = wellColumns(heights);
   const isVertical = piece.plane === 'XY' && cols.size === 1 && ys.size >= 3;
   const isFlatBar = ys.size <= 2 && cols.size >= 3;
+  const targetY = lowestIncompleteY(before);
+  const empties = countEmptyOnLayer(before, targetY);
 
   let sum = 0;
   let maxH = 0;
-  let shortCols = 0;
   for (let i = 0; i < heights.length; i++) {
     sum += heights[i];
     if (heights[i] > maxH) maxH = heights[i];
-    if (heights[i] <= 1) shortCols++;
   }
   const avg = sum / heights.length;
 
@@ -389,14 +424,24 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
       if (h >= maxH && maxH >= 4) return -3000;
       if (afterH > maxH + 1 && maxH >= 3) return -2500;
 
-      // Primary goal: stand the bar up in short/empty columns (especially if a tower exists).
+      // Layer still open with many holes → flat fill is better than a single pillar.
+      if (empties >= 4 && !wells.has(key)) {
+        return -1800;
+      }
+
       let bonus = 0;
-      if (h === 0) bonus = 2800;
-      else if (h === 1) bonus = 2200;
-      else if (h === 2) bonus = 900;
-      if (maxH >= 4 && h <= 1) bonus += 1500; // actively escape the skyscraper habit
-      if (wells.has(key) && h <= 2) bonus += 600;
-      // Keep result near average height.
+      // True well: neighbors taller — vertical is the right tool.
+      if (wells.has(key) && h <= targetY + 1) {
+        bonus += 2400;
+      } else if (empties > 0 && empties <= 3 && before.cells[targetY][cz][cx] === null) {
+        // Last few holes on the layer — vertical still fills this column's hole.
+        bonus += 800;
+      } else if (empties === SIZE * SIZE && h === 0) {
+        // Brand-new empty board/layer: mild OK, but flat is still preferred via scoreFlatIBar.
+        bonus += 200;
+      } else if (h === 0) {
+        bonus += 100;
+      }
       if (afterH > avg + 4) bonus -= 800;
       return bonus;
     }
@@ -407,11 +452,8 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
   }
 
   if (piece.plane === 'XZ' && isFlatBar) {
-    // XZ cannot stand; still forbid climbing. Prefer flip+vertical via XY candidates.
-    const flat = scoreFlatIBar(before, piece, cells, heights, maxH, avg);
-    // Nudge: when short columns exist, XZ flat is worse than flipping to XY vertical.
-    if (shortCols > 0) return flat - 2000;
-    return flat - 500;
+    // XZ is always flat in Y — good for layer fill; no longer penalize vs vertical.
+    return scoreFlatIBar(before, piece, cells, heights, maxH, avg);
   }
 
   return 0;

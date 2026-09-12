@@ -63,18 +63,17 @@ export class Board {
     const remaining: BoardCell[][][] = [];
     let cleared = 0;
     for (let y = 0; y < HEIGHT; y++) {
-      let full = true;
-      for (let z = 0; z < SIZE && full; z++) {
+      let filled = 0;
+      for (let z = 0; z < SIZE; z++) {
         for (let x = 0; x < SIZE; x++) {
-          if (this.cells[y][z][x] === null) {
-            full = false;
-            break;
-          }
+          if (this.cells[y][z][x] !== null) filled++;
         }
       }
-      if (full) {
+      // Strict: every cell on the XZ slice must be occupied (SIZE²).
+      if (filled === SIZE * SIZE) {
         cleared++;
       } else {
+        // Copy row refs for non-cleared layers (layers are replaced wholesale below).
         remaining.push(this.cells[y]);
       }
     }
@@ -86,7 +85,7 @@ export class Board {
       remaining.push(layer);
     }
     for (let y = 0; y < HEIGHT; y++) {
-      this.cells[y] = remaining[y];
+      this.cells[y] = remaining[y]!;
     }
     return cleared;
   }
