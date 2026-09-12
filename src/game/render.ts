@@ -45,12 +45,12 @@ export class GameRenderer {
     const cx = SIZE / 2;
     const cy = HEIGHT / 2;
     const cz = SIZE / 2;
-    // Aim higher so the well sits lower in the frame (clear HUD; fill bottom empty).
-    this.camTarget = new THREE.Vector3(cx, cy * 0.72, cz);
+    // Mid framing: clear HUD, leave a gap above the bottom control bar.
+    this.camTarget = new THREE.Vector3(cx, cy * 0.58, cz);
 
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 280);
     // Elevated view from +X/+Z corner so both footprint axes are visible.
-    this.camera.position.set(cx + SIZE * 2.15, HEIGHT * 1.22, cz + SIZE * 2.4);
+    this.camera.position.set(cx + SIZE * 2.1, HEIGHT * 1.25, cz + SIZE * 2.35);
     this.camera.lookAt(this.camTarget);
 
     this.scene.fog = new THREE.Fog(0x0b1020, 45, 95);
@@ -142,7 +142,7 @@ export class GameRenderer {
     this.camera.aspect = w / h;
     // Stronger downward bias: push the well down so the top clears the HUD
     // and the empty floor band under the well shrinks.
-    const shiftY = Math.round(h * 0.14);
+    const shiftY = Math.round(h * 0.08);
     this.camera.setViewOffset(w, h + shiftY, 0, 0, w, h);
     this.camera.updateProjectionMatrix();
   }

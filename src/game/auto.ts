@@ -302,10 +302,10 @@ function wellColumns(heights: Int16Array): Set<string> {
 }
 
 /**
- * I-piece policy:
- * - XY: prefer 竖条 (span Y in one column), especially into well slots.
- * - XY horizontal while wells exist: heavy penalty (this was the bug in screenshots).
- * - XZ: cannot become 竖条 (plane locked); still avoid stacking into a standing wall.
+ * I-piece policy (anti-skyscraper):
+ * - Vertical I only to fill a *shallow* well up toward neighbors — never grow a tower.
+ * - Prefer flat I on the lowest incomplete layer when the board already has tall columns.
+ * - XZ I stays flat; reward low corridors, punish stacking.
  */
 function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): number {
   if (piece.type !== 'I') return 0;
@@ -316,55 +316,72 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
   const isVertical = piece.plane === 'XY' && cols.size === 1 && ys.size >= 3;
   const isFlatBar = ys.size <= 2 && cols.size >= 3;
 
+  let sum = 0;
+  let maxH = 0;
+  for (let i = 0; i < heights.length; i++) {
+    sum += heights[i];
+    if (heights[i] > maxH) maxH = heights[i];
+  }
+  const avg = sum / heights.length;
+
   if (piece.plane === 'XY') {
     if (isVertical) {
       const key = [...cols][0]!;
-      let bonus = 1100;
-      if (wells.has(key)) bonus += 1400;
-      // Standing in a truly empty/low column is also good early game.
-      const h = heights[Number(key.split(',')[1]) * SIZE + Number(key.split(',')[0])];
-      bonus += (5 - h) * 80;
-      // Clear sky above landing: no holes in this column under the piece.
       const [cx, cz] = key.split(',').map(Number) as [number, number];
-      let buried = false;
-      for (let y = 0; y < Math.min(...ys); y++) {
-        if (before.cells[y][cz][cx] === null) {
-          buried = true;
-          break;
-        }
+      const h = heights[cz * SIZE + cx];
+      const afterH = h + ys.size; // ~+4 for full I
+
+      // Hard ban: no skyscrapers / stacking on already-high columns.
+      if (h >= 3) return -2800;
+      if (afterH > avg + 3) return -2200;
+      if (afterH >= maxH + 2 && maxH >= 2) return -2400;
+
+      // Only reward filling a real well that stays near neighbor height.
+      if (wells.has(key) && h <= 2) {
+        const neigh: number[] = [];
+        if (cx > 0) neigh.push(heights[cz * SIZE + (cx - 1)]);
+        if (cx + 1 < SIZE) neigh.push(heights[cz * SIZE + (cx + 1)]);
+        if (cz > 0) neigh.push(heights[(cz - 1) * SIZE + cx]);
+        if (cz + 1 < SIZE) neigh.push(heights[(cz + 1) * SIZE + cx]);
+        const nMin = neigh.length ? Math.min(...neigh) : h;
+        // Good if we close the gap without overshooting neighbors much.
+        if (afterH <= nMin + 1) return 900;
+        return -800;
       }
-      // For vertical I sitting on floor/stack, empty cells under minY mean a hole — bad.
-      // Actually if minY>0 and cells below empty, that's floating/hole. fits() prevents float.
-      if (buried) bonus -= 500;
-      return bonus;
+
+      // Early game empty floor column — mild OK once.
+      if (h === 0 && maxH <= 1) return 250;
+      return -900;
     }
+
     if (isFlatBar) {
-      // Horizontal long bar while 竖槽 exist → exactly the bad habit from screenshots.
-      let penalty = -400;
-      if (wells.size > 0) penalty -= 1600;
-      // Extra: if this bar sits on a tall line, crush it.
-      let tallHits = 0;
-      let maxH = 0;
-      for (let i = 0; i < heights.length; i++) if (heights[i] > maxH) maxH = heights[i];
-      for (const key of cols) {
-        const [x, z] = key.split(',').map(Number) as [number, number];
-        if (heights[z * SIZE + x] >= Math.max(2, maxH - 1)) tallHits++;
+      // Prefer flat fill of low empty cells; don't force vertical when towers exist.
+      let emptyLow = 0;
+      let onTall = 0;
+      for (const c of cells) {
+        if (c.y <= 1 && before.cells[c.y][c.z][c.x] === null) emptyLow++;
+        const colH = heights[c.z * SIZE + c.x];
+        if (colH >= Math.max(2, maxH - 1)) onTall++;
       }
-      if (tallHits >= 3) penalty -= 1200;
-      return penalty;
+      let score = emptyLow * 120;
+      if (Math.min(...ys) >= 2) score -= 900;
+      if (onTall >= 3) score -= 1500;
+      // If board already has a tower, flat low fill is better than another vertical.
+      if (maxH >= 4) score += 400;
+      return score;
     }
   }
 
   if (piece.plane === 'XZ' && isFlatBar) {
-    // Flat-only I: reward threading a low 4-wide empty corridor; punish climbing.
     let emptyLow = 0;
+    let onTall = 0;
     for (const c of cells) {
       if (c.y <= 1 && before.cells[c.y][c.z][c.x] === null) emptyLow++;
+      if (heights[c.z * SIZE + c.x] >= Math.max(2, maxH - 1)) onTall++;
     }
-    let score = emptyLow * 90;
-    if (Math.min(...ys) >= 2) score -= 700;
-    // If many wells exist, flat I is usually worse than waiting — mild push to low fill only.
-    if (wells.size >= 3 && Math.min(...ys) >= 1) score -= 500;
+    let score = emptyLow * 110;
+    if (Math.min(...ys) >= 2) score -= 1000;
+    if (onTall >= 3) score -= 1800;
     return score;
   }
 
@@ -394,10 +411,11 @@ function verticalStripBonus(_before: Board, piece: ActivePiece, heights: Int16Ar
   // Prefer low columns and covering several distinct footprint cells when shape allows.
   let bonus = (8 - avgCol) * 55 + (4 - minColH) * 30 + n * 40;
 
-  // Tall vertical I (same x,z many y): strong preference for currently short columns.
+  // Single-column tall strips: only a mild nudge on *short* columns; never on towers.
   const ys = new Set(cells.map((c) => c.y));
   if (ys.size >= 3 && n === 1) {
-    bonus += (6 - avgCol) * 90;
+    if (avgCol >= 3) bonus -= 800;
+    else bonus += (3 - avgCol) * 40;
   }
 
   // Don't plant a vertical strip against an existing tall ridge (extends the wall).
