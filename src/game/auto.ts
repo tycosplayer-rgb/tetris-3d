@@ -152,22 +152,38 @@ function wallPenalty(heights: Int16Array): number {
   // Many tall cells that are mutually adjacent ⇒ a wall/ridge.
   const cluster = edgePairs / 2;
   const spreadGap = maxH - minH;
-  return tall * 35 + cluster * 55 + spreadGap * spreadGap * 20;
+  return tall * 80 + cluster * 140 + spreadGap * spreadGap * 45;
 }
 
-/** Floor/down contact good; sideways stacking (builds walls) is discouraged. */
-function contactScore(before: Board, piece: ActivePiece): number {
+/**
+ * Floor contact is good.
+ * "Down" contact on short columns is OK (filling); on already-tall columns it
+ * is what makes cyan I-bars keep stacking into a wall at ~ (4,4).
+ */
+function contactScore(before: Board, piece: ActivePiece, heights: Int16Array): number {
   const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
   const set = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
+  let sum = 0;
+  let maxH = 0;
+  for (let i = 0; i < heights.length; i++) {
+    sum += heights[i];
+    if (heights[i] > maxH) maxH = heights[i];
+  }
+  const avg = sum / heights.length;
+
   let floor = 0;
-  let down = 0;
+  let downGood = 0;
+  let downBad = 0;
   let side = 0;
   for (const c of cells) {
-    // floor
     if (c.y === 0) floor++;
-    // down neighbor
     if (c.y > 0 && !set.has(`${c.x},${c.y - 1},${c.z}`)) {
-      if (before.cells[c.y - 1][c.z][c.x] !== null) down++;
+      if (before.cells[c.y - 1][c.z][c.x] !== null) {
+        const colH = heights[c.z * SIZE + c.x];
+        // Stacking onto a local high column / the global max ⇒ wall growth.
+        if (colH >= avg + 0.5 || (maxH >= 2 && colH >= maxH)) downBad++;
+        else downGood++;
+      }
     }
     for (const [dx, dz] of [
       [1, 0],
@@ -179,15 +195,49 @@ function contactScore(before: Board, piece: ActivePiece): number {
       const nz = c.z + dz;
       if (set.has(`${nx},${c.y},${nz}`)) continue;
       if (!before.inBounds(nx, c.y, nz)) {
-        side += 0.25; // board wall — mild
+        side += 0.25;
         continue;
       }
       if (before.cells[c.y][nz][nx] !== null) side++;
     }
   }
-  // Side contact is what creates the "横块垒墙" habit — tax it hard for XZ.
-  const sideWeight = piece.plane === 'XZ' ? -55 : -15;
-  return floor * 70 + down * 45 + side * sideWeight;
+  const sideWeight = piece.plane === 'XZ' ? -70 : -20;
+  return floor * 90 + downGood * 35 - downBad * 160 + side * sideWeight;
+}
+
+/** Heavy tax for parking a piece on columns that are already the tall ridge. */
+function ridgeStackPenalty(piece: ActivePiece, heights: Int16Array): number {
+  const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
+  let sum = 0;
+  let maxH = 0;
+  for (let i = 0; i < heights.length; i++) {
+    sum += heights[i];
+    if (heights[i] > maxH) maxH = heights[i];
+  }
+  const avg = sum / heights.length;
+  if (maxH <= 1) return 0;
+
+  const seen = new Set<string>();
+  let penalty = 0;
+  let onMax = 0;
+  for (const c of cells) {
+    const key = `${c.x},${c.z}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const h = heights[c.z * SIZE + c.x];
+    if (h >= maxH && maxH >= 2) {
+      onMax++;
+      penalty += 420;
+    } else if (h >= avg + 1) {
+      penalty += 180 * (h - avg);
+    }
+    // Prefer empty/low columns strongly for flat (XZ) bars.
+    if (piece.plane === 'XZ' && h === 0) penalty -= 90;
+    if (piece.plane === 'XZ' && h > 0 && h <= avg) penalty -= 25;
+  }
+  // Classic failure mode: whole I-bar sits on the same ridge (4 cells @ center).
+  if (piece.plane === 'XZ' && onMax >= 3) penalty += 900;
+  return penalty;
 }
 
 /**
@@ -311,13 +361,14 @@ function evaluateBoard(
   let place = 0;
   if (piece) {
     const heightsBefore = columnHeights(before);
-    place += contactScore(before, piece);
+    place += contactScore(before, piece, heightsBefore);
+    place -= ridgeStackPenalty(piece, heightsBefore);
     place += lowestLayerFillBonus(before, piece);
     place += verticalStripBonus(before, piece, heightsBefore);
     if (piece.plane === 'XZ') {
       // Flat pieces should extend the lowest shelf, not climb the wall.
-      place -= landingY * 80;
-      if (landingY >= 2) place -= landingY * 120;
+      place -= landingY * 100;
+      if (landingY >= 2) place -= landingY * 160;
     } else {
       place -= landingY * 35;
     }
