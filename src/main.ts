@@ -142,7 +142,10 @@ function ensureAutoTarget(): void {
   const key = pieceSpawnKey();
   if (autoTarget && autoPieceKey === key) return;
   try {
-    autoTarget = findBestPlacement(engine.board, a.type, a.plane, engine.stats.level);
+    autoTarget = findBestPlacement(engine.board, a.type, a.plane, engine.stats.level, {
+      type: engine.next.type,
+      plane: engine.next.plane,
+    });
   } catch (err) {
     console.error('auto plan failed', err);
     autoTarget = null;
