@@ -14,6 +14,7 @@ const overlayTitle = document.querySelector('#overlay-title')!;
 const overlayMsg = document.querySelector('#overlay-msg')!;
 const btnStart = document.querySelector('#btn-start')!;
 const btnAuto = document.querySelector<HTMLButtonElement>('#btn-auto')!;
+const btnFlip = document.querySelector('#btn-flip')!;
 const btnSoft = document.querySelector('#btn-soft')!;
 const btnHard = document.querySelector('#btn-hard')!;
 const btnPause = document.querySelector('#btn-pause')!;
@@ -110,7 +111,7 @@ function togglePause(): void {
   if (engine.phase === 'ready' || engine.phase === 'over') return;
   engine.togglePause();
   if (engine.phase === 'paused') {
-    showOverlay('Paused', autoMode ? 'Auto paused' : 'Swipe · Tap rotate · Corner flip', 'Resume');
+    showOverlay('Paused', autoMode ? 'Auto paused' : 'Swipe · Tap rotate · Flip button', 'Resume');
     btnPause.textContent = 'Resume';
   } else {
     hideOverlay();
@@ -260,6 +261,10 @@ btnAuto.addEventListener('click', () => {
   setAutoMode(!autoMode);
 });
 
+btnFlip.addEventListener('click', () => {
+  flip();
+});
+
 btnHard.addEventListener('click', () => {
   if (autoMode || engine.phase !== 'playing') return;
   engine.hardDrop();
@@ -294,7 +299,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  'Swipe move · Tap rotate · Left-bottom flip · Auto for CPU',
+  'Swipe move · Tap rotate · Flip button · Auto for CPU',
   'Start',
 );
 syncView();

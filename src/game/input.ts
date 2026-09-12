@@ -3,8 +3,7 @@
  * Swipe directions are mapped using camera-relative axes supplied by the caller
  * so screen-left always moves the piece left from the player's view.
  *
- * Tap bottom-left zone (left 1/2 × bottom 1/4 of the stage) = flip face (XY↔XZ).
- * Tap elsewhere = in-plane rotate.
+ * Tap = in-plane rotate. Flip is a UI button (and F/C keys).
  */
 
 export type MoveDir = 'left' | 'right' | 'forward' | 'back';
@@ -34,12 +33,6 @@ const TAP_MAX_DIST = 18;
 const SWIPE_THRESHOLD = 28;
 const STEP_PX = 36;
 
-/** Left half × bottom quarter of the stage element. */
-export function isFlipZone(clientX: number, clientY: number, stage: DOMRect): boolean {
-  const localX = clientX - stage.left;
-  const localY = clientY - stage.top;
-  return localX >= 0 && localX < stage.width * 0.5 && localY >= stage.height * 0.75 && localY <= stage.height;
-}
 
 export class InputController {
   private axis: AxisMap = {
@@ -141,12 +134,7 @@ export class InputController {
     const dist = Math.hypot(dx, dy);
 
     if (!this.moved && dist <= TAP_MAX_DIST && dt <= TAP_MAX_MS) {
-      const stage = this.stageEl.getBoundingClientRect();
-      if (isFlipZone(this.startX, this.startY, stage)) {
-        this.handlers.onFlip();
-      } else {
-        this.handlers.onRotate();
-      }
+      this.handlers.onRotate();
     } else if (dist >= SWIPE_THRESHOLD && this.accX === 0 && this.accY === 0) {
       this.emitSwipe(dx, dy);
     }
