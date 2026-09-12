@@ -3,7 +3,7 @@ import type { ActivePiece, Cell, PieceType } from './types';
 
 /** Square footprint (X == Z). Sensible vertical height. */
 export const SIZE = 8;
-export const HEIGHT = 16;
+export const HEIGHT = 18;
 
 export type BoardCell = PieceType | null;
 

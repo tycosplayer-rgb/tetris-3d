@@ -46,11 +46,11 @@ export class GameRenderer {
     const cy = HEIGHT / 2;
     const cz = SIZE / 2;
     // Fill the stage: a bit lower look-at so less empty floor under the well.
-    this.camTarget = new THREE.Vector3(cx, cy * 0.48, cz);
+    this.camTarget = new THREE.Vector3(cx, cy * 0.42, cz);
 
     this.camera = new THREE.PerspectiveCamera(52, 1, 0.1, 280);
     // Elevated view from +X/+Z corner so both footprint axes are visible.
-    this.camera.position.set(cx + SIZE * 2.05, HEIGHT * 1.32, cz + SIZE * 2.3);
+    this.camera.position.set(cx + SIZE * 2.05, HEIGHT * 1.28, cz + SIZE * 2.3);
     this.camera.lookAt(this.camTarget);
 
     this.scene.fog = new THREE.Fog(0x0b1020, 45, 95);
