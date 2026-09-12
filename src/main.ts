@@ -221,11 +221,15 @@ function autoStep(): void {
   }
 
   // Flip face first (XY↔XZ), then in-plane rotate, then slide.
+  // If flip/rotate fails near the ceiling, soft-drop for headroom — never hard-drop yet
+  // (that was dumping every I on the spawn footprint).
   if (a.plane !== t.plane) {
     if (!engine.tryFlip()) {
-      engine.hardDrop();
-      autoTarget = null;
-      maybeGameOver();
+      if (!engine.softDrop()) {
+        engine.hardDrop();
+        autoTarget = null;
+        maybeGameOver();
+      }
     }
     needsSync = true;
     return;
@@ -233,9 +237,11 @@ function autoStep(): void {
 
   if (a.rotation !== t.rotation) {
     if (!engine.tryRotate()) {
-      engine.hardDrop();
-      autoTarget = null;
-      maybeGameOver();
+      if (!engine.softDrop()) {
+        engine.hardDrop();
+        autoTarget = null;
+        maybeGameOver();
+      }
     }
     needsSync = true;
     return;
