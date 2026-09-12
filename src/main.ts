@@ -28,8 +28,13 @@ let dropAcc = 0;
 let lastT = performance.now();
 let needsSync = true;
 
-/** manual | semi (CPU until I) | full (CPU always) — one button cycles these. */
+/**
+ * manual | semi (CPU until I) | full (CPU always) | train (I-only CPU).
+ * semi/train kept in code for later debugging; hidden from the cycle for now.
+ */
 type PlayMode = 'manual' | 'semi' | 'full' | 'train';
+/** Flip true to put 半自动 / 自动训练 back in the button cycle. */
+const SHOW_DEBUG_PLAY_MODES = false;
 let playMode: PlayMode = 'manual';
 let autoTarget: Placement | null = null;
 let autoPieceKey = '';
@@ -167,9 +172,13 @@ function setPlayMode(mode: PlayMode): void {
 }
 
 function cyclePlayMode(): void {
-  const order: PlayMode[] = ['manual', 'semi', 'full', 'train'];
+  const order: PlayMode[] = SHOW_DEBUG_PLAY_MODES
+    ? ['manual', 'semi', 'full', 'train']
+    : ['manual', 'full'];
+  // If we were left in a hidden debug mode, jump back into the public cycle.
   const i = order.indexOf(playMode);
-  setPlayMode(order[(i + 1) % order.length]!);
+  const next = order[i < 0 ? 0 : (i + 1) % order.length]!;
+  setPlayMode(next);
 }
 
 /** Semi-auto only: on I (long bar), pause and switch to manual. */
@@ -351,7 +360,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  '按钮：手动 / 半自动 / 自动 / 自动训练（仅长条+CPU）',
+  'Swipe move · Tap rotate · Flip · 按钮切换手动/自动',
   'Start',
 );
 syncView();
