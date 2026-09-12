@@ -304,15 +304,15 @@ function wellColumns(heights: Int16Array): Set<string> {
 
 
 /**
- * Lying I-bar scoring. The screenshot failure mode is stacking flat bars on the
- * same footprint into a "skyscraper" of horizontal planks — crush that hard.
+ * Lying I-bar scoring. Crush "横躺一直往上放" (flat planks stacked into a tower).
+ * Flat I is only OK when covering empty cells on the bottom — never climbing a shelf.
  */
 function scoreFlatIBar(
   before: Board,
   _piece: ActivePiece,
   cells: { x: number; y: number; z: number }[],
   heights: Int16Array,
-  _maxH: number,
+  maxH: number,
   avg: number,
 ): number {
   const cols = new Map<string, number>();
@@ -332,35 +332,31 @@ function scoreFlatIBar(
     if (c.y > 0 && before.cells[c.y - 1][c.z][c.x] !== null) onFilled++;
   }
 
-  let score = emptyLow * 140;
-
-  // Same-height shelf under the whole bar and landing on it ⇒ lying stack / wall tower.
-  if (cols.size >= 3 && minCol >= 1 && maxCol === minCol && landingY === minCol) {
-    score -= 3200 + minCol * 500;
+  // Absolute veto: lying bar climbing / stacking on an existing ridge.
+  if (minCol >= 1 && onFilled >= Math.max(3, cells.length - 1)) {
+    return -8000 - minCol * 600;
   }
-  // Nearly the same: bar rests entirely on already-filled columns.
-  if (cols.size >= 3 && minCol >= 1 && onFilled >= cells.length) {
-    score -= 2400 + minCol * 350;
+  if (cols.size >= 3 && minCol >= 1 && maxCol === minCol && landingY >= minCol) {
+    return -9000 - minCol * 700;
   }
-  // Any climb above the lowest incomplete floor while empty cells remain elsewhere.
-  if (landingY >= 2) score -= 1200 * landingY;
-  if (minCol >= 3) score -= 2000;
-  if (minCol >= Math.max(2, Math.floor(avg)) && emptyLow === 0) score -= 1500;
+  if (landingY >= 2) return -5000 - landingY * 800;
+  if (minCol >= 2) return -6000;
 
-  // Reward only spreading into still-empty footprint at the bottom.
+  // Floor-only flat fill — weak reward (standing up is preferred).
+  let score = emptyLow * 60;
   for (const h of colHs) {
-    if (h === 0) score += 100;
-    else if (h <= 1 && landingY <= 1) score += 40;
+    if (h === 0) score += 50;
   }
-
+  if (maxH >= 3) score -= 400; // when a tower exists, don't lay more flat seeds
+  if (avg >= 1.5) score -= 200;
   return score;
 }
 
 /**
- * I-piece policy (anti-skyscraper):
- * - Vertical I only to fill a *shallow* well up toward neighbors — never grow a tower.
- * - Prefer flat I on the lowest incomplete layer when the board already has tall columns.
- * - XZ I stays flat; reward low corridors, punish stacking.
+ * I-piece policy:
+ * Default = stand it up (XY vertical) in a short/empty column.
+ * Flat lying is last resort for bottom empty corridors only.
+ * Never stack flat bars into a skyscraper.
  */
 function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): number {
   if (piece.type !== 'I') return 0;
@@ -373,9 +369,11 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
 
   let sum = 0;
   let maxH = 0;
+  let shortCols = 0;
   for (let i = 0; i < heights.length; i++) {
     sum += heights[i];
     if (heights[i] > maxH) maxH = heights[i];
+    if (heights[i] <= 1) shortCols++;
   }
   const avg = sum / heights.length;
 
@@ -384,29 +382,23 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
       const key = [...cols][0]!;
       const [cx, cz] = key.split(',').map(Number) as [number, number];
       const h = heights[cz * SIZE + cx];
-      const afterH = h + ys.size; // ~+4 for full I
+      const afterH = h + ys.size;
 
-      // Hard ban: no skyscrapers / stacking on already-high columns.
-      if (h >= 3) return -2800;
-      if (afterH > avg + 3) return -2200;
-      if (afterH >= maxH + 2 && maxH >= 2) return -2400;
+      // Don't plant on / extend an existing tall column.
+      if (h >= 3) return -3500;
+      if (h >= maxH && maxH >= 4) return -3000;
+      if (afterH > maxH + 1 && maxH >= 3) return -2500;
 
-      // Only reward filling a real well that stays near neighbor height.
-      if (wells.has(key) && h <= 2) {
-        const neigh: number[] = [];
-        if (cx > 0) neigh.push(heights[cz * SIZE + (cx - 1)]);
-        if (cx + 1 < SIZE) neigh.push(heights[cz * SIZE + (cx + 1)]);
-        if (cz > 0) neigh.push(heights[(cz - 1) * SIZE + cx]);
-        if (cz + 1 < SIZE) neigh.push(heights[(cz + 1) * SIZE + cx]);
-        const nMin = neigh.length ? Math.min(...neigh) : h;
-        // Good if we close the gap without overshooting neighbors much.
-        if (afterH <= nMin + 1) return 900;
-        return -800;
-      }
-
-      // Early game empty floor column — mild OK once.
-      if (h === 0 && maxH <= 1) return 250;
-      return -900;
+      // Primary goal: stand the bar up in short/empty columns (especially if a tower exists).
+      let bonus = 0;
+      if (h === 0) bonus = 2800;
+      else if (h === 1) bonus = 2200;
+      else if (h === 2) bonus = 900;
+      if (maxH >= 4 && h <= 1) bonus += 1500; // actively escape the skyscraper habit
+      if (wells.has(key) && h <= 2) bonus += 600;
+      // Keep result near average height.
+      if (afterH > avg + 4) bonus -= 800;
+      return bonus;
     }
 
     if (isFlatBar) {
@@ -415,7 +407,11 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
   }
 
   if (piece.plane === 'XZ' && isFlatBar) {
-    return scoreFlatIBar(before, piece, cells, heights, maxH, avg);
+    // XZ cannot stand; still forbid climbing. Prefer flip+vertical via XY candidates.
+    const flat = scoreFlatIBar(before, piece, cells, heights, maxH, avg);
+    // Nudge: when short columns exist, XZ flat is worse than flipping to XY vertical.
+    if (shortCols > 0) return flat - 2000;
+    return flat - 500;
   }
 
   return 0;
@@ -447,8 +443,8 @@ function verticalStripBonus(_before: Board, piece: ActivePiece, heights: Int16Ar
   // Single-column tall strips: only a mild nudge on *short* columns; never on towers.
   const ys = new Set(cells.map((c) => c.y));
   if (ys.size >= 3 && n === 1) {
-    if (avgCol >= 3) bonus -= 800;
-    else bonus += (3 - avgCol) * 40;
+    if (avgCol >= 3) bonus -= 1200;
+    else bonus += (4 - avgCol) * 120;
   }
 
   // Don't plant a vertical strip against an existing tall ridge (extends the wall).
@@ -627,7 +623,7 @@ export function findBestPlacement(
 
   candidates.sort((a, b) => b.placement.score - a.placement.score);
 
-  const topN = next ? Math.min(10, candidates.length) : 1;
+  const topN = next ? Math.min(16, candidates.length) : 1;
   let best: Placement | null = null;
 
   for (let i = 0; i < topN; i++) {
