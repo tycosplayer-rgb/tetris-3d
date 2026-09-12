@@ -171,25 +171,25 @@ export class Engine {
     return this.tryMove(0, -1, 0);
   }
 
-  hardDrop(): number {
-    if (this.phase !== 'playing' || !this.active) return 0;
+  hardDrop(): { dist: number; cleared: number } {
+    if (this.phase !== 'playing' || !this.active) return { dist: 0, cleared: 0 };
     let dist = 0;
     while (this.tryMove(0, -1, 0)) dist++;
-    this.lockPiece();
-    return dist;
+    const cleared = this.lockPiece();
+    return { dist, cleared };
   }
 
-  /** Gravity tick. Returns true if piece locked. */
-  tickGravity(): boolean {
-    if (this.phase !== 'playing' || !this.active) return false;
-    if (this.tryMove(0, -1, 0)) return false;
-    // Cannot move down — lock unless we've been resetting forever.
-    this.lockPiece();
-    return true;
+  /** Gravity tick. Returns whether the piece locked and how many layers cleared. */
+  tickGravity(): { locked: boolean; cleared: number } {
+    if (this.phase !== 'playing' || !this.active) return { locked: false, cleared: 0 };
+    if (this.tryMove(0, -1, 0)) return { locked: false, cleared: 0 };
+    const cleared = this.lockPiece();
+    return { locked: true, cleared };
   }
 
-  private lockPiece(): void {
-    if (!this.active) return;
+  /** Lock active piece; returns layers cleared (0 if none / no active). */
+  private lockPiece(): number {
+    if (!this.active) return 0;
     this.board.lock(this.active);
     this.active = null;
     const cleared = this.board.clearFullLayers();
@@ -202,6 +202,7 @@ export class Engine {
     if (!this.spawn()) {
       // game over already set in spawn
     }
+    return cleared;
   }
 
   ghostCells() {

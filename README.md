@@ -46,7 +46,8 @@ Keyboard also supports WASD / arrows for camera-aligned moves and **X / Z / K** 
 
 - No SRS-perfect wall-kick tables (simple offset kicks).
 - No hold piece / bag randomizer (independent rolls).
-- No audio, no orbit camera, no multiplayer.
+- No orbit camera, no multiplayer.
+- Procedural Web Audio SFX (mute toggle in HUD).
 - Layer clear has no fancy particle effects.
 - Desktop mouse: click = rotate, drag = move (same as touch).
 

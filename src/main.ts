@@ -2,6 +2,7 @@ import { findBestPlacement, type Placement } from './game/auto';
 import { Engine } from './game/engine';
 import { InputController, axisMapFromCamera, type MoveDir } from './game/input';
 import { GameRenderer } from './game/render';
+import { gameAudio } from './game/audio';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
 const stage = document.querySelector<HTMLElement>('#stage')!;
@@ -14,6 +15,7 @@ const overlayTitle = document.querySelector('#overlay-title')!;
 const overlayMsg = document.querySelector('#overlay-msg')!;
 const btnStart = document.querySelector('#btn-start')!;
 const btnAuto = document.querySelector<HTMLButtonElement>('#btn-auto')!;
+const btnMute = document.querySelector<HTMLButtonElement>('#btn-mute')!;
 const btnFlip = document.querySelector('#btn-flip')!;
 const btnSoft = document.querySelector('#btn-soft')!;
 const btnHard = document.querySelector('#btn-hard')!;
@@ -87,17 +89,26 @@ function syncView(): void {
 function move(dir: MoveDir): void {
   if (isCpuPlaying() || engine.phase !== 'playing') return;
   const { dx, dz } = input.dirToDelta(dir);
-  if (engine.tryMove(dx, 0, dz)) needsSync = true;
+  if (engine.tryMove(dx, 0, dz)) {
+    gameAudio.play('move');
+    needsSync = true;
+  }
 }
 
 function rotate(): void {
   if (isCpuPlaying() || engine.phase !== 'playing') return;
-  if (engine.tryRotate()) needsSync = true;
+  if (engine.tryRotate()) {
+    gameAudio.play('rotate');
+    needsSync = true;
+  }
 }
 
 function flip(): void {
   if (isCpuPlaying() || engine.phase !== 'playing') return;
-  if (engine.tryFlip()) needsSync = true;
+  if (engine.tryFlip()) {
+    gameAudio.play('flip');
+    needsSync = true;
+  }
 }
 
 function refreshAxis(): void {
@@ -106,6 +117,7 @@ function refreshAxis(): void {
 }
 
 function startGame(): void {
+  gameAudio.unlock();
   engine.start();
   hideOverlay();
   btnPause.textContent = 'Pause';
@@ -116,6 +128,7 @@ function startGame(): void {
   autoAcc = 0;
   needsSync = true;
   refreshAxis();
+  gameAudio.play('start');
 }
 
 function restartGame(): void {
@@ -125,6 +138,7 @@ function restartGame(): void {
 function togglePause(): void {
   if (engine.phase === 'ready' || engine.phase === 'over') return;
   engine.togglePause();
+  gameAudio.play('pause');
   if (engine.phase === 'paused') {
     const pauseHint =
       playMode === 'semi'
@@ -143,9 +157,24 @@ function togglePause(): void {
   }
 }
 
+
+function playLockOrClear(cleared: number): void {
+  if (cleared > 0) gameAudio.play('clear', cleared);
+  else gameAudio.play('lock');
+}
+
+function doHardDrop(playHardWhoosh = true): void {
+  if (playHardWhoosh) gameAudio.play('hard');
+  const { cleared } = engine.hardDrop();
+  playLockOrClear(cleared);
+  needsSync = true;
+  maybeGameOver();
+}
+
 function maybeGameOver(): void {
   if (engine.phase === 'over') {
     autoTarget = null;
+    gameAudio.play('over');
     showOverlay('Game Over', `Score ${engine.stats.score} · Lines ${engine.stats.lines}`, 'Restart');
   }
 }
@@ -222,10 +251,8 @@ function autoStep(): void {
   const a = engine.active;
   const t = autoTarget;
   if (!t) {
-    engine.hardDrop();
-    needsSync = true;
+    doHardDrop(false);
     autoTarget = null;
-    maybeGameOver();
     return;
   }
 
@@ -235,9 +262,8 @@ function autoStep(): void {
   if (a.plane !== t.plane) {
     if (!engine.tryFlip()) {
       if (!engine.softDrop()) {
-        engine.hardDrop();
+        doHardDrop(false);
         autoTarget = null;
-        maybeGameOver();
       }
     }
     needsSync = true;
@@ -247,9 +273,8 @@ function autoStep(): void {
   if (a.rotation !== t.rotation) {
     if (!engine.tryRotate()) {
       if (!engine.softDrop()) {
-        engine.hardDrop();
+        doHardDrop(false);
         autoTarget = null;
-        maybeGameOver();
       }
     }
     needsSync = true;
@@ -268,19 +293,16 @@ function autoStep(): void {
       if (!moved && dx !== 0) moved = engine.tryMove(dx, 0, 0);
     }
     if (!moved) {
-      engine.hardDrop();
+      doHardDrop(false);
       autoTarget = null;
-      maybeGameOver();
     }
     needsSync = true;
     return;
   }
 
-  engine.hardDrop();
+  doHardDrop(false);
   autoTarget = null;
   autoPieceKey = '';
-  needsSync = true;
-  maybeGameOver();
 }
 
 const input = new InputController(canvas, {
@@ -296,9 +318,7 @@ const input = new InputController(canvas, {
   },
   onHardDrop: () => {
     if (isCpuPlaying() || engine.phase !== 'playing') return;
-    engine.hardDrop();
-    needsSync = true;
-    maybeGameOver();
+    doHardDrop(true);
   },
   onPause: togglePause,
   onRestart: restartGame,
@@ -307,7 +327,17 @@ const input = new InputController(canvas, {
 input.attach();
 refreshAxis();
 
+// Browsers require a gesture before AudioContext can play loudly.
+document.body.addEventListener(
+  'pointerdown',
+  () => {
+    gameAudio.unlock();
+  },
+  { passive: true },
+);
+
 btnStart.addEventListener('click', () => {
+  gameAudio.unlock();
   if (engine.phase === 'paused') {
     togglePause();
     return;
@@ -318,7 +348,16 @@ btnStart.addEventListener('click', () => {
 btnRestart.addEventListener('click', restartGame);
 btnPause.addEventListener('click', togglePause);
 
+btnMute.addEventListener('click', () => {
+  gameAudio.unlock();
+  const muted = gameAudio.toggleMute();
+  btnMute.textContent = muted ? '🔇' : '🔊';
+  btnMute.classList.toggle('muted', muted);
+  btnMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+});
+
 btnAuto.addEventListener('click', () => {
+  gameAudio.unlock();
   cyclePlayMode();
 });
 
@@ -328,9 +367,7 @@ btnFlip.addEventListener('click', () => {
 
 btnHard.addEventListener('click', () => {
   if (isCpuPlaying() || engine.phase !== 'playing') return;
-  engine.hardDrop();
-  needsSync = true;
-  maybeGameOver();
+  doHardDrop(true);
 });
 
 btnSoft.addEventListener('pointerdown', (e) => {
@@ -400,9 +437,12 @@ function frame(now: number): void {
       while (dropAcc >= interval) {
         dropAcc -= interval;
         if (engine.phase !== 'playing') break;
-        engine.tickGravity();
+        const grav = engine.tickGravity();
         needsSync = true;
-        maybeGameOver();
+        if (grav.locked) {
+          playLockOrClear(grav.cleared);
+          maybeGameOver();
+        }
         if (engine.phase !== 'playing') break;
       }
     }

@@ -69,6 +69,31 @@ body {
   font-weight: 600 !important;
 }
 
+#btn-mute {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 1px solid rgba(140, 170, 220, 0.45);
+  background: rgba(30, 40, 70, 0.95);
+  color: #e8eefc;
+  border-radius: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 2.4rem;
+  z-index: 3;
+  min-width: 2.6rem;
+}
+
+#btn-mute.muted {
+  opacity: 0.55;
+  border-color: rgba(180, 120, 120, 0.5);
+}
+
+#btn-mute:active {
+  filter: brightness(1.1);
+}
+
 #btn-auto {
   appearance: none;
   flex: 0 0 auto;
