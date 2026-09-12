@@ -28,7 +28,9 @@ let dropAcc = 0;
 let lastT = performance.now();
 let needsSync = true;
 
-let autoMode = false;
+/** manual | semi (CPU until I) | full (CPU always) — one button cycles these. */
+type PlayMode = 'manual' | 'semi' | 'full';
+let playMode: PlayMode = 'manual';
 let autoTarget: Placement | null = null;
 let autoPieceKey = '';
 let autoAcc = 0;
@@ -48,8 +50,10 @@ function updateHud(): void {
   linesEl.textContent = String(engine.stats.lines);
   levelEl.textContent = String(engine.stats.level);
   nextEl.textContent = engine.nextLabel();
-  btnAuto.classList.toggle('active', autoMode);
-  btnAuto.textContent = autoMode ? '半自动 ON' : '半自动';
+  const cpu = playMode !== 'manual';
+  btnAuto.classList.toggle('active', cpu);
+  btnAuto.textContent =
+    playMode === 'manual' ? '手动' : playMode === 'semi' ? '半自动' : '自动';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -70,18 +74,18 @@ function syncView(): void {
 }
 
 function move(dir: MoveDir): void {
-  if (autoMode || engine.phase !== 'playing') return;
+  if (isCpuPlaying() || engine.phase !== 'playing') return;
   const { dx, dz } = input.dirToDelta(dir);
   if (engine.tryMove(dx, 0, dz)) needsSync = true;
 }
 
 function rotate(): void {
-  if (autoMode || engine.phase !== 'playing') return;
+  if (isCpuPlaying() || engine.phase !== 'playing') return;
   if (engine.tryRotate()) needsSync = true;
 }
 
 function flip(): void {
-  if (autoMode || engine.phase !== 'playing') return;
+  if (isCpuPlaying() || engine.phase !== 'playing') return;
   if (engine.tryFlip()) needsSync = true;
 }
 
@@ -111,7 +115,13 @@ function togglePause(): void {
   if (engine.phase === 'ready' || engine.phase === 'over') return;
   engine.togglePause();
   if (engine.phase === 'paused') {
-    showOverlay('Paused', autoMode ? '半自动已暂停' : 'Swipe · Tap rotate · Flip button', 'Resume');
+    const pauseHint =
+      playMode === 'semi'
+        ? '半自动已暂停'
+        : playMode === 'full'
+          ? '自动已暂停'
+          : 'Swipe · Tap rotate · Flip button';
+    showOverlay('Paused', pauseHint, 'Resume');
     btnPause.textContent = 'Resume';
   } else {
     hideOverlay();
@@ -127,25 +137,34 @@ function maybeGameOver(): void {
   }
 }
 
-function setAutoMode(on: boolean): void {
-  autoMode = on;
+function isCpuPlaying(): boolean {
+  return playMode === 'semi' || playMode === 'full';
+}
+
+function setPlayMode(mode: PlayMode): void {
+  playMode = mode;
   autoTarget = null;
   autoPieceKey = '';
   autoAcc = 0;
   softDropping = false;
   updateHud();
-  if (autoMode && (engine.phase === 'ready' || engine.phase === 'over')) {
+  if (isCpuPlaying() && (engine.phase === 'ready' || engine.phase === 'over')) {
     startGame();
   }
-  // If already mid-game on an I, hand off immediately.
-  if (autoMode) handoffLongBarIfNeeded();
+  if (playMode === 'semi') handoffLongBarIfNeeded();
 }
 
-/** Semi-auto: on I (long bar), pause and hand control to the player. */
+function cyclePlayMode(): void {
+  const next: PlayMode =
+    playMode === 'manual' ? 'semi' : playMode === 'semi' ? 'full' : 'manual';
+  setPlayMode(next);
+}
+
+/** Semi-auto only: on I (long bar), pause and switch to manual. */
 function handoffLongBarIfNeeded(): boolean {
-  if (!autoMode || engine.phase !== 'playing' || !engine.active) return false;
+  if (playMode !== 'semi' || engine.phase !== 'playing' || !engine.active) return false;
   if (engine.active.type !== 'I') return false;
-  setAutoMode(false);
+  setPlayMode('manual');
   engine.togglePause();
   showOverlay('长条', '半自动已切手动，请自己放这一块', '继续');
   btnPause.textContent = 'Resume';
@@ -176,7 +195,7 @@ function ensureAutoTarget(): void {
 
 /** One auto step: rotate / slide / hard-drop toward best placement. */
 function autoStep(): void {
-  if (!autoMode || engine.phase !== 'playing' || !engine.active) return;
+  if (!isCpuPlaying() || engine.phase !== 'playing' || !engine.active) return;
   if (handoffLongBarIfNeeded()) return;
   ensureAutoTarget();
   const a = engine.active;
@@ -242,14 +261,14 @@ const input = new InputController(canvas, {
   onRotate: rotate,
   onFlip: flip,
   onSoftDropStart: () => {
-    if (autoMode) return;
+    if (isCpuPlaying()) return;
     softDropping = true;
   },
   onSoftDropEnd: () => {
     softDropping = false;
   },
   onHardDrop: () => {
-    if (autoMode || engine.phase !== 'playing') return;
+    if (isCpuPlaying() || engine.phase !== 'playing') return;
     engine.hardDrop();
     needsSync = true;
     maybeGameOver();
@@ -273,7 +292,7 @@ btnRestart.addEventListener('click', restartGame);
 btnPause.addEventListener('click', togglePause);
 
 btnAuto.addEventListener('click', () => {
-  setAutoMode(!autoMode);
+  cyclePlayMode();
 });
 
 btnFlip.addEventListener('click', () => {
@@ -281,14 +300,14 @@ btnFlip.addEventListener('click', () => {
 });
 
 btnHard.addEventListener('click', () => {
-  if (autoMode || engine.phase !== 'playing') return;
+  if (isCpuPlaying() || engine.phase !== 'playing') return;
   engine.hardDrop();
   needsSync = true;
   maybeGameOver();
 });
 
 btnSoft.addEventListener('pointerdown', (e) => {
-  if (autoMode) return;
+  if (isCpuPlaying()) return;
   e.preventDefault();
   softDropping = true;
 });
@@ -314,7 +333,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  'Swipe move · Tap rotate · Flip · 半自动遇长条切手动',
+  '按钮切换：手动 / 半自动 / 自动（半自动遇长条切手动）',
   'Start',
 );
 syncView();
@@ -324,29 +343,29 @@ function frame(now: number): void {
   lastT = now;
 
   if (engine.phase === 'playing') {
-    if (autoMode) {
+    if (isCpuPlaying()) {
       if (handoffLongBarIfNeeded()) {
         // paused + manual; fall through to sync
       } else {
-      autoAcc += dt;
-      let steps = 0;
-      while (autoAcc >= AUTO_STEP_MS && steps < AUTO_MAX_STEPS_PER_FRAME) {
-        autoAcc -= AUTO_STEP_MS;
-        steps++;
-        if (engine.phase !== 'playing') break;
-        try {
-          autoStep();
-        } catch (err) {
-          console.error('auto step failed', err);
-          setAutoMode(false);
-          break;
+        autoAcc += dt;
+        let steps = 0;
+        while (autoAcc >= AUTO_STEP_MS && steps < AUTO_MAX_STEPS_PER_FRAME) {
+          autoAcc -= AUTO_STEP_MS;
+          steps++;
+          if (engine.phase !== 'playing') break;
+          try {
+            autoStep();
+          } catch (err) {
+            console.error('auto step failed', err);
+            setPlayMode('manual');
+            break;
+          }
+          if (engine.phase !== 'playing') break;
         }
-        if (engine.phase !== 'playing') break;
-      }
-      // Drop excess catch-up time so we never burst-plan dozens of pieces in one frame.
-      if (autoAcc > AUTO_STEP_MS * AUTO_MAX_STEPS_PER_FRAME) {
-        autoAcc = 0;
-      }
+        // Drop excess catch-up time so we never burst-plan dozens of pieces in one frame.
+        if (autoAcc > AUTO_STEP_MS * AUTO_MAX_STEPS_PER_FRAME) {
+          autoAcc = 0;
+        }
       }
     } else {
       const interval = softDropping ? Math.min(80, engine.dropMs / 8) : engine.dropMs;
