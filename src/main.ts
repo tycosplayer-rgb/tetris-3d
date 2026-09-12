@@ -49,7 +49,7 @@ function updateHud(): void {
   levelEl.textContent = String(engine.stats.level);
   nextEl.textContent = engine.nextLabel();
   btnAuto.classList.toggle('active', autoMode);
-  btnAuto.textContent = autoMode ? 'Auto ON' : 'Auto';
+  btnAuto.textContent = autoMode ? '半自动 ON' : '半自动';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -111,7 +111,7 @@ function togglePause(): void {
   if (engine.phase === 'ready' || engine.phase === 'over') return;
   engine.togglePause();
   if (engine.phase === 'paused') {
-    showOverlay('Paused', autoMode ? 'Auto paused' : 'Swipe · Tap rotate · Flip button', 'Resume');
+    showOverlay('Paused', autoMode ? '半自动已暂停' : 'Swipe · Tap rotate · Flip button', 'Resume');
     btnPause.textContent = 'Resume';
   } else {
     hideOverlay();
@@ -137,6 +137,20 @@ function setAutoMode(on: boolean): void {
   if (autoMode && (engine.phase === 'ready' || engine.phase === 'over')) {
     startGame();
   }
+  // If already mid-game on an I, hand off immediately.
+  if (autoMode) handoffLongBarIfNeeded();
+}
+
+/** Semi-auto: on I (long bar), pause and hand control to the player. */
+function handoffLongBarIfNeeded(): boolean {
+  if (!autoMode || engine.phase !== 'playing' || !engine.active) return false;
+  if (engine.active.type !== 'I') return false;
+  setAutoMode(false);
+  engine.togglePause();
+  showOverlay('长条', '半自动已切手动，请自己放这一块', '继续');
+  btnPause.textContent = 'Resume';
+  needsSync = true;
+  return true;
 }
 
 function ensureAutoTarget(): void {
@@ -163,6 +177,7 @@ function ensureAutoTarget(): void {
 /** One auto step: rotate / slide / hard-drop toward best placement. */
 function autoStep(): void {
   if (!autoMode || engine.phase !== 'playing' || !engine.active) return;
+  if (handoffLongBarIfNeeded()) return;
   ensureAutoTarget();
   const a = engine.active;
   const t = autoTarget;
@@ -299,7 +314,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  'Swipe move · Tap rotate · Flip button · Auto for CPU',
+  'Swipe move · Tap rotate · Flip · 半自动遇长条切手动',
   'Start',
 );
 syncView();
@@ -310,6 +325,9 @@ function frame(now: number): void {
 
   if (engine.phase === 'playing') {
     if (autoMode) {
+      if (handoffLongBarIfNeeded()) {
+        // paused + manual; fall through to sync
+      } else {
       autoAcc += dt;
       let steps = 0;
       while (autoAcc >= AUTO_STEP_MS && steps < AUTO_MAX_STEPS_PER_FRAME) {
@@ -328,6 +346,7 @@ function frame(now: number): void {
       // Drop excess catch-up time so we never burst-plan dozens of pieces in one frame.
       if (autoAcc > AUTO_STEP_MS * AUTO_MAX_STEPS_PER_FRAME) {
         autoAcc = 0;
+      }
       }
     } else {
       const interval = softDropping ? Math.min(80, engine.dropMs / 8) : engine.dropMs;
