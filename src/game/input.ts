@@ -2,6 +2,9 @@
  * Touch / pointer + keyboard input.
  * Swipe directions are mapped using camera-relative axes supplied by the caller
  * so screen-left always moves the piece left from the player's view.
+ *
+ * Tap bottom-left zone (left 1/2 × bottom 1/4 of the stage) = flip face (XY↔XZ).
+ * Tap elsewhere = in-plane rotate.
  */
 
 export type MoveDir = 'left' | 'right' | 'forward' | 'back';
@@ -9,6 +12,7 @@ export type MoveDir = 'left' | 'right' | 'forward' | 'back';
 export interface InputHandlers {
   onMove: (dir: MoveDir) => void;
   onRotate: () => void;
+  onFlip: () => void;
   onSoftDropStart: () => void;
   onSoftDropEnd: () => void;
   onHardDrop: () => void;
@@ -29,6 +33,13 @@ const TAP_MAX_MS = 280;
 const TAP_MAX_DIST = 18;
 const SWIPE_THRESHOLD = 28;
 const STEP_PX = 36;
+
+/** Left half × bottom quarter of the stage element. */
+export function isFlipZone(clientX: number, clientY: number, stage: DOMRect): boolean {
+  const localX = clientX - stage.left;
+  const localY = clientY - stage.top;
+  return localX >= 0 && localX < stage.width * 0.5 && localY >= stage.height * 0.75 && localY <= stage.height;
+}
 
 export class InputController {
   private axis: AxisMap = {
@@ -51,8 +62,10 @@ export class InputController {
   };
 
   constructor(
-    private readonly target: HTMLElement,
+    _target: HTMLElement,
     private readonly handlers: InputHandlers,
+    /** Element whose box defines the flip zone (usually #stage). */
+    private readonly stageEl: HTMLElement,
   ) {
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
@@ -66,21 +79,22 @@ export class InputController {
   }
 
   attach(): void {
-    this.target.addEventListener('pointerdown', this.onPointerDown);
-    this.target.addEventListener('pointermove', this.onPointerMove);
-    this.target.addEventListener('pointerup', this.onPointerUp);
-    this.target.addEventListener('pointercancel', this.onPointerUp);
-    this.target.addEventListener('contextmenu', this.onContextMenu);
+    // Listen on stage so the bottom-left flip zone (and canvas) share one pointer stream.
+    this.stageEl.addEventListener('pointerdown', this.onPointerDown);
+    this.stageEl.addEventListener('pointermove', this.onPointerMove);
+    this.stageEl.addEventListener('pointerup', this.onPointerUp);
+    this.stageEl.addEventListener('pointercancel', this.onPointerUp);
+    this.stageEl.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
   }
 
   detach(): void {
-    this.target.removeEventListener('pointerdown', this.onPointerDown);
-    this.target.removeEventListener('pointermove', this.onPointerMove);
-    this.target.removeEventListener('pointerup', this.onPointerUp);
-    this.target.removeEventListener('pointercancel', this.onPointerUp);
-    this.target.removeEventListener('contextmenu', this.onContextMenu);
+    this.stageEl.removeEventListener('pointerdown', this.onPointerDown);
+    this.stageEl.removeEventListener('pointermove', this.onPointerMove);
+    this.stageEl.removeEventListener('pointerup', this.onPointerUp);
+    this.stageEl.removeEventListener('pointercancel', this.onPointerUp);
+    this.stageEl.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
   }
@@ -98,7 +112,7 @@ export class InputController {
     this.accY = 0;
     this.moved = false;
     try {
-      this.target.setPointerCapture?.(e.pointerId);
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     } catch {
       /* ignore */
     }
@@ -127,7 +141,12 @@ export class InputController {
     const dist = Math.hypot(dx, dy);
 
     if (!this.moved && dist <= TAP_MAX_DIST && dt <= TAP_MAX_MS) {
-      this.handlers.onRotate();
+      const stage = this.stageEl.getBoundingClientRect();
+      if (isFlipZone(this.startX, this.startY, stage)) {
+        this.handlers.onFlip();
+      } else {
+        this.handlers.onRotate();
+      }
     } else if (dist >= SWIPE_THRESHOLD && this.accX === 0 && this.accY === 0) {
       this.emitSwipe(dx, dy);
     }
@@ -186,6 +205,13 @@ export class InputController {
         e.preventDefault();
         this.handlers.onRotate();
         break;
+      case 'f':
+      case 'F':
+      case 'c':
+      case 'C':
+        e.preventDefault();
+        this.handlers.onFlip();
+        break;
       case 'p':
       case 'P':
         this.handlers.onPause();
@@ -223,7 +249,6 @@ export function axisMapFromCamera(
   const dirX = fx / flen;
   const dirZ = fz / flen;
 
-  // Right on XZ = perpendicular to look-on-ground (Y-up).
   let grx = -dirZ;
   let grz = dirX;
   const grlen = Math.hypot(grx, grz) || 1;

@@ -4,6 +4,7 @@ import { InputController, axisMapFromCamera, type MoveDir } from './game/input';
 import { GameRenderer } from './game/render';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')!;
+const stage = document.querySelector<HTMLElement>('#stage')!;
 const scoreEl = document.querySelector('#score')!;
 const linesEl = document.querySelector('#lines')!;
 const levelEl = document.querySelector('#level')!;
@@ -78,6 +79,11 @@ function rotate(): void {
   if (engine.tryRotate()) needsSync = true;
 }
 
+function flip(): void {
+  if (autoMode || engine.phase !== 'playing') return;
+  if (engine.tryFlip()) needsSync = true;
+}
+
 function refreshAxis(): void {
   const { cam, target } = renderer.getCameraPose();
   input.setAxisMap(axisMapFromCamera(cam.x, cam.y, cam.z, target.x, target.y, target.z));
@@ -104,7 +110,7 @@ function togglePause(): void {
   if (engine.phase === 'ready' || engine.phase === 'over') return;
   engine.togglePause();
   if (engine.phase === 'paused') {
-    showOverlay('Paused', autoMode ? 'Auto paused' : 'Swipe to move · Tap to rotate', 'Resume');
+    showOverlay('Paused', autoMode ? 'Auto paused' : 'Swipe · Tap rotate · Corner flip', 'Resume');
     btnPause.textContent = 'Resume';
   } else {
     hideOverlay();
@@ -167,6 +173,17 @@ function autoStep(): void {
     return;
   }
 
+  // Flip face first (XY↔XZ), then in-plane rotate, then slide.
+  if (a.plane !== t.plane) {
+    if (!engine.tryFlip()) {
+      engine.hardDrop();
+      autoTarget = null;
+      maybeGameOver();
+    }
+    needsSync = true;
+    return;
+  }
+
   if (a.rotation !== t.rotation) {
     if (!engine.tryRotate()) {
       engine.hardDrop();
@@ -207,6 +224,7 @@ function autoStep(): void {
 const input = new InputController(canvas, {
   onMove: move,
   onRotate: rotate,
+  onFlip: flip,
   onSoftDropStart: () => {
     if (autoMode) return;
     softDropping = true;
@@ -222,7 +240,7 @@ const input = new InputController(canvas, {
   },
   onPause: togglePause,
   onRestart: restartGame,
-});
+}, stage);
 
 input.attach();
 refreshAxis();
@@ -276,7 +294,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  'Swipe to move · Tap to rotate · Auto lets the CPU play for score',
+  'Swipe move · Tap rotate · Left-bottom flip · Auto for CPU',
   'Start',
 );
 syncView();

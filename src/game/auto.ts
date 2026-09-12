@@ -3,6 +3,7 @@ import { cellsForPiece } from './pieces';
 import type { ActivePiece, Plane, PieceType } from './types';
 
 export interface Placement {
+  plane: Plane;
   rotation: number;
   x: number;
   z: number;
@@ -524,6 +525,7 @@ function scoreDrop(board: Board, dropped: ActivePiece): {
   const score = evaluateBoard(board, after, cleared, dropped.y, dropped);
   return {
     placement: {
+      plane: dropped.plane,
       rotation: dropped.rotation,
       x: dropped.x,
       z: dropped.z,
@@ -540,9 +542,12 @@ function bestImmediate(
   spec: PieceSpec,
 ): { placement: Placement; after: Board; cleared: number } | null {
   let best: { placement: Placement; after: Board; cleared: number } | null = null;
-  for (const dropped of iterDrops(board, spec)) {
-    const cand = scoreDrop(board, dropped);
-    if (!best || cand.placement.score > best.placement.score) best = cand;
+  const planes: Plane[] = [spec.plane, spec.plane === 'XY' ? 'XZ' : 'XY'];
+  for (const p of planes) {
+    for (const dropped of iterDrops(board, { type: spec.type, plane: p })) {
+      const cand = scoreDrop(board, dropped);
+      if (!best || cand.placement.score > best.placement.score) best = cand;
+    }
   }
   return best;
 }
@@ -558,11 +563,13 @@ export function findBestPlacement(
   _level: number,
   next?: PieceSpec | null,
 ): Placement | null {
-  const current: PieceSpec = { type, plane };
+  const planes: Plane[] = [plane, plane === 'XY' ? 'XZ' : 'XY'];
   const candidates: Array<{ placement: Placement; after: Board; cleared: number }> = [];
 
-  for (const dropped of iterDrops(board, current)) {
-    candidates.push(scoreDrop(board, dropped));
+  for (const p of planes) {
+    for (const dropped of iterDrops(board, { type, plane: p })) {
+      candidates.push(scoreDrop(board, dropped));
+    }
   }
 
   if (candidates.length === 0) return null;

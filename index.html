@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -35,6 +35,9 @@
 
       <div id="stage">
         <canvas id="game-canvas"></canvas>
+        <div id="flip-zone" aria-hidden="true">
+          <span>翻面</span>
+        </div>
         <div id="controls">
           <button type="button" id="btn-soft" aria-label="Soft drop">↓ Soft</button>
           <button type="button" id="btn-hard" aria-label="Hard drop">⬇ Hard</button>
@@ -46,7 +49,7 @@
       <div id="overlay" class="hidden">
         <div class="panel">
           <h1 id="overlay-title">3D Tetris</h1>
-          <p id="overlay-msg">Swipe to move · Tap to rotate</p>
+          <p id="overlay-msg">Swipe move · Tap rotate · Corner flip</p>
           <button type="button" id="btn-start">Start</button>
         </div>
       </div>

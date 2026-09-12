@@ -121,6 +121,40 @@ export class Engine {
     return false;
   }
 
+  /**
+   * Flip face only: XY ↔ XZ. Keeps the same rotation index (matrix reinterpreted).
+   * Does not in-plane-rotate.
+   */
+  tryFlip(): boolean {
+    if (this.phase !== 'playing' || !this.active) return false;
+    const flipped = {
+      ...this.active,
+      plane: (this.active.plane === 'XY' ? 'XZ' : 'XY') as typeof this.active.plane,
+    };
+    const kicks: Array<[number, number, number]> = [
+      [0, 0, 0],
+      [-1, 0, 0],
+      [1, 0, 0],
+      [0, 0, -1],
+      [0, 0, 1],
+      [0, -1, 0],
+      [0, 1, 0],
+      [-2, 0, 0],
+      [2, 0, 0],
+      [0, 0, -2],
+      [0, 0, 2],
+    ];
+    for (const [kx, ky, kz] of kicks) {
+      const kicked = { ...flipped, x: flipped.x + kx, y: flipped.y + ky, z: flipped.z + kz };
+      if (this.board.fits(kicked)) {
+        this.active = kicked;
+        this.lockResets = Math.min(this.maxLockResets, this.lockResets + 1);
+        return true;
+      }
+    }
+    return false;
+  }
+
   softDrop(): boolean {
     return this.tryMove(0, -1, 0);
   }
