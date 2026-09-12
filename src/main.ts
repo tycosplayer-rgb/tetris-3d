@@ -29,7 +29,7 @@ let lastT = performance.now();
 let needsSync = true;
 
 /** manual | semi (CPU until I) | full (CPU always) — one button cycles these. */
-type PlayMode = 'manual' | 'semi' | 'full';
+type PlayMode = 'manual' | 'semi' | 'full' | 'train';
 let playMode: PlayMode = 'manual';
 let autoTarget: Placement | null = null;
 let autoPieceKey = '';
@@ -53,7 +53,13 @@ function updateHud(): void {
   const cpu = playMode !== 'manual';
   btnAuto.classList.toggle('active', cpu);
   btnAuto.textContent =
-    playMode === 'manual' ? '手动' : playMode === 'semi' ? '半自动' : '自动';
+    playMode === 'manual'
+      ? '手动'
+      : playMode === 'semi'
+        ? '半自动'
+        : playMode === 'full'
+          ? '自动'
+          : '训练';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -120,7 +126,9 @@ function togglePause(): void {
         ? '半自动已暂停'
         : playMode === 'full'
           ? '自动已暂停'
-          : 'Swipe · Tap rotate · Flip button';
+          : playMode === 'train'
+            ? '训练已暂停（仅长条）'
+            : 'Swipe · Tap rotate · Flip button';
     showOverlay('Paused', pauseHint, 'Resume');
     btnPause.textContent = 'Resume';
   } else {
@@ -138,26 +146,30 @@ function maybeGameOver(): void {
 }
 
 function isCpuPlaying(): boolean {
-  return playMode === 'semi' || playMode === 'full';
+  return playMode === 'semi' || playMode === 'full' || playMode === 'train';
 }
 
 function setPlayMode(mode: PlayMode): void {
   playMode = mode;
+  engine.spawnIOnly = mode === 'train';
   autoTarget = null;
   autoPieceKey = '';
   autoAcc = 0;
   softDropping = false;
   updateHud();
-  if (isCpuPlaying() && (engine.phase === 'ready' || engine.phase === 'over')) {
+  // Train always restarts on a fresh I-only board for clean analysis.
+  if (mode === 'train') {
+    startGame();
+  } else if (isCpuPlaying() && (engine.phase === 'ready' || engine.phase === 'over')) {
     startGame();
   }
   if (playMode === 'semi') handoffLongBarIfNeeded();
 }
 
 function cyclePlayMode(): void {
-  const next: PlayMode =
-    playMode === 'manual' ? 'semi' : playMode === 'semi' ? 'full' : 'manual';
-  setPlayMode(next);
+  const order: PlayMode[] = ['manual', 'semi', 'full', 'train'];
+  const i = order.indexOf(playMode);
+  setPlayMode(order[(i + 1) % order.length]!);
 }
 
 /** Semi-auto only: on I (long bar), pause and switch to manual. */
@@ -333,7 +345,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  '按钮切换：手动 / 半自动 / 自动（半自动遇长条切手动）',
+  '按钮：手动 / 半自动 / 自动 / 训练（训练=仅长条+CPU）',
   'Start',
 );
 syncView();

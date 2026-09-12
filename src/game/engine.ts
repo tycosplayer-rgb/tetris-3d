@@ -7,8 +7,8 @@ export interface SpawnedPreview {
   plane: Plane;
 }
 
-function makePreview(): SpawnedPreview {
-  return { type: randomType(), plane: randomPlane() };
+function makePreview(iOnly = false): SpawnedPreview {
+  return { type: iOnly ? 'I' : randomType(), plane: randomPlane() };
 }
 
 function spawnFrom(preview: SpawnedPreview): ActivePiece {
@@ -43,12 +43,14 @@ export class Engine {
   phase: GamePhase = 'ready';
   stats: GameStats = { score: 0, lines: 0, level: 1 };
   dropMs = 800;
+  /** Training: every piece is an I (long bar). */
+  spawnIOnly = false;
   private lockResets = 0;
   private readonly maxLockResets = 12;
 
   reset(): void {
     this.board = new Board();
-    this.next = makePreview();
+    this.next = makePreview(this.spawnIOnly);
     this.active = null;
     this.phase = 'ready';
     this.stats = { score: 0, lines: 0, level: 1 };
@@ -74,7 +76,7 @@ export class Engine {
 
   spawn(): boolean {
     const piece = spawnFrom(this.next);
-    this.next = makePreview();
+    this.next = makePreview(this.spawnIOnly);
     this.lockResets = 0;
     if (!this.board.fits(piece)) {
       this.active = piece;
