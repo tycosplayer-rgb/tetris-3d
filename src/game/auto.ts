@@ -46,7 +46,6 @@ function dropPlacement(
 }
 
 function columnHeights(board: Board): Int16Array {
-  // indexed z * SIZE + x
   const h = new Int16Array(SIZE * SIZE);
   for (let z = 0; z < SIZE; z++) {
     for (let x = 0; x < SIZE; x++) {
@@ -92,7 +91,7 @@ function countHoles(board: Board): { holes: number; deepHoles: number } {
   return { holes, deepHoles };
 }
 
-/** How packed lower layers are — critical for eventually clearing 8×8 slabs. */
+/** Prefer nearly-full low layers; sparse mid-height clutter is bad. */
 function layerPackingScore(board: Board): number {
   let score = 0;
   for (let y = 0; y < HEIGHT; y++) {
@@ -104,55 +103,184 @@ function layerPackingScore(board: Board): number {
     }
     if (filled === 0) continue;
     const frac = filled / (SIZE * SIZE);
-    // Prefer nearly-full low layers; punish sparse mid-height clutter.
     const lowBias = (HEIGHT - y) / HEIGHT;
-    score += frac * frac * 420 * lowBias;
-    // Almost-complete layers are very valuable (one more piece may clear).
-    if (filled >= SIZE * SIZE - 8) score += 900 * lowBias;
-    if (filled >= SIZE * SIZE - 4) score += 1600 * lowBias;
+    score += frac * frac * 520 * lowBias;
+    if (filled >= SIZE * SIZE - 8) score += 1100 * lowBias;
+    if (filled >= SIZE * SIZE - 4) score += 2000 * lowBias;
+    // Half-built layers that are not near full are a trap (wall-ish shelves).
+    if (filled > 8 && filled < SIZE * SIZE * 0.45) score -= (0.45 - frac) * 800 * lowBias;
   }
   return score;
 }
 
-function contactBonus(board: Board, piece: ActivePiece): number {
-  const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
-  const set = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
-  let touches = 0;
-  const dirs: Array<[number, number, number]> = [
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 1, 0],
-    [0, -1, 0],
-    [0, 0, 1],
-    [0, 0, -1],
-  ];
-  for (const c of cells) {
-    for (const [dx, dy, dz] of dirs) {
-      const nx = c.x + dx;
-      const ny = c.y + dy;
-      const nz = c.z + dz;
-      if (set.has(`${nx},${ny},${nz}`)) continue;
-      if (ny < 0) {
-        touches += 2; // floor
-        continue;
+/**
+ * Punish "ridge / wall" shapes: clusters of tall columns glued together
+ * while large areas of the footprint stay low.
+ */
+function wallPenalty(heights: Int16Array): number {
+  let maxH = 0;
+  let minH = HEIGHT;
+  let sum = 0;
+  for (let i = 0; i < heights.length; i++) {
+    const hh = heights[i];
+    sum += hh;
+    if (hh > maxH) maxH = hh;
+    if (hh < minH) minH = hh;
+  }
+  const avg = sum / heights.length;
+  if (maxH <= 1) return 0;
+
+  const tallThresh = Math.max(avg + 1.5, maxH - 1);
+  let tall = 0;
+  let edgePairs = 0;
+  for (let z = 0; z < SIZE; z++) {
+    for (let x = 0; x < SIZE; x++) {
+      const i = z * SIZE + x;
+      if (heights[i] < tallThresh) continue;
+      tall++;
+      const neigh = [
+        x > 0 ? heights[z * SIZE + (x - 1)] : -1,
+        x + 1 < SIZE ? heights[z * SIZE + (x + 1)] : -1,
+        z > 0 ? heights[(z - 1) * SIZE + x] : -1,
+        z + 1 < SIZE ? heights[(z + 1) * SIZE + x] : -1,
+      ];
+      for (const n of neigh) {
+        if (n >= tallThresh) edgePairs++;
       }
-      if (!board.inBounds(nx, ny, nz)) {
-        touches += 1; // wall
-        continue;
-      }
-      if (board.cells[ny][nz][nx] !== null) touches += 2;
     }
   }
-  return touches * 18;
+  // Many tall cells that are mutually adjacent ⇒ a wall/ridge.
+  const cluster = edgePairs / 2;
+  const spreadGap = maxH - minH;
+  return tall * 35 + cluster * 55 + spreadGap * spreadGap * 20;
+}
+
+/** Floor/down contact good; sideways stacking (builds walls) is discouraged. */
+function contactScore(before: Board, piece: ActivePiece): number {
+  const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
+  const set = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
+  let floor = 0;
+  let down = 0;
+  let side = 0;
+  for (const c of cells) {
+    // floor
+    if (c.y === 0) floor++;
+    // down neighbor
+    if (c.y > 0 && !set.has(`${c.x},${c.y - 1},${c.z}`)) {
+      if (before.cells[c.y - 1][c.z][c.x] !== null) down++;
+    }
+    for (const [dx, dz] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = c.x + dx;
+      const nz = c.z + dz;
+      if (set.has(`${nx},${c.y},${nz}`)) continue;
+      if (!before.inBounds(nx, c.y, nz)) {
+        side += 0.25; // board wall — mild
+        continue;
+      }
+      if (before.cells[c.y][nz][nx] !== null) side++;
+    }
+  }
+  // Side contact is what creates the "横块垒墙" habit — tax it hard for XZ.
+  const sideWeight = piece.plane === 'XZ' ? -55 : -15;
+  return floor * 70 + down * 45 + side * sideWeight;
+}
+
+/**
+ * Prefer covering empty cells on the lowest incomplete layer (fill out, don't stack up).
+ */
+function lowestLayerFillBonus(before: Board, piece: ActivePiece): number {
+  let targetY = -1;
+  for (let y = 0; y < HEIGHT; y++) {
+    let filled = 0;
+    let empty = 0;
+    for (let z = 0; z < SIZE; z++) {
+      for (let x = 0; x < SIZE; x++) {
+        if (before.cells[y][z][x] !== null) filled++;
+        else empty++;
+      }
+    }
+    if (empty > 0 && filled > 0) {
+      targetY = y;
+      break;
+    }
+    if (filled === 0) {
+      targetY = y;
+      break;
+    }
+  }
+  if (targetY < 0) return 0;
+
+  const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
+  let covered = 0;
+  let wastedHigh = 0;
+  for (const c of cells) {
+    if (c.y === targetY && before.cells[c.y][c.z][c.x] === null) covered++;
+    if (c.y > targetY) wastedHigh++;
+  }
+  return covered * 220 - wastedHigh * 160;
+}
+
+/**
+ * Vertical (XY) strips: park them in low / empty columns and spread across the footprint.
+ */
+function verticalStripBonus(_before: Board, piece: ActivePiece, heights: Int16Array): number {
+  if (piece.plane !== 'XY') return 0;
+  const cells = cellsForPiece(piece.type, piece.plane, piece.rotation, piece.x, piece.y, piece.z);
+  const cols = new Map<string, number>();
+  let minColH = HEIGHT;
+  let sumColH = 0;
+  for (const c of cells) {
+    const key = `${c.x},${c.z}`;
+    if (!cols.has(key)) {
+      const h = heights[c.z * SIZE + c.x];
+      cols.set(key, h);
+      sumColH += h;
+      if (h < minColH) minColH = h;
+    }
+  }
+  const n = cols.size || 1;
+  const avgCol = sumColH / n;
+  // Prefer low columns and covering several distinct footprint cells when shape allows.
+  let bonus = (8 - avgCol) * 55 + (4 - minColH) * 30 + n * 40;
+
+  // Tall vertical I (same x,z many y): strong preference for currently short columns.
+  const ys = new Set(cells.map((c) => c.y));
+  if (ys.size >= 3 && n === 1) {
+    bonus += (6 - avgCol) * 90;
+  }
+
+  // Don't plant a vertical strip against an existing tall ridge (extends the wall).
+  for (const [key, h] of cols) {
+    const [xs, zs] = key.split(',').map(Number) as [number, number];
+    for (const [dx, dz] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nx = xs + dx;
+      const nz = zs + dz;
+      if (nx < 0 || nz < 0 || nx >= SIZE || nz >= SIZE) continue;
+      const nh = heights[nz * SIZE + nx];
+      if (nh >= h + 2 && nh >= 3) bonus -= 120;
+    }
+  }
+  return bonus;
 }
 
 function evaluateBoard(
-  board: Board,
+  before: Board,
+  after: Board,
   cleared: number,
   landingY: number,
   piece: ActivePiece | null,
 ): number {
-  const heights = columnHeights(board);
+  const heights = columnHeights(after);
   let aggregate = 0;
   let maxH = 0;
   let bump = 0;
@@ -173,37 +301,39 @@ function evaluateBoard(
     }
   }
 
-  const { holes, deepHoles } = countHoles(board);
-  const pack = layerPackingScore(board);
-  const contact = piece ? contactBonus(board, piece) : 0;
-
-  // Clears matter, but survival (no holes / low stack) matters more early.
+  const { holes, deepHoles } = countHoles(after);
+  const pack = layerPackingScore(after);
+  const walls = wallPenalty(heights);
   const clearBonus = cleared * 8000 + (cleared >= 2 ? cleared * 3500 : 0) + (cleared >= 3 ? 5000 : 0);
-
   const danger =
     maxH >= HEIGHT - 5 ? (maxH - (HEIGHT - 6)) * (maxH - (HEIGHT - 6)) * 700 : 0;
 
-  // XY pieces span multiple floors — keep them short and tucked, or they kill clears.
-  let planeBias = 0;
-  if (piece?.plane === 'XY') {
-    planeBias -= landingY * 40;
-    planeBias -= Math.max(0, maxH - 6) * 80;
-  } else if (piece?.plane === 'XZ') {
-    planeBias += 120; // flat pieces are what actually complete layers
-    planeBias -= landingY * 10;
+  let place = 0;
+  if (piece) {
+    const heightsBefore = columnHeights(before);
+    place += contactScore(before, piece);
+    place += lowestLayerFillBonus(before, piece);
+    place += verticalStripBonus(before, piece, heightsBefore);
+    if (piece.plane === 'XZ') {
+      // Flat pieces should extend the lowest shelf, not climb the wall.
+      place -= landingY * 80;
+      if (landingY >= 2) place -= landingY * 120;
+    } else {
+      place -= landingY * 35;
+    }
   }
 
   return (
     clearBonus +
     pack +
-    contact +
-    planeBias -
+    place -
+    walls -
     holes * 1600 -
     deepHoles * 1100 -
-    aggregate * 32 -
-    bump * 40 -
-    maxH * 140 -
-    landingY * 30 -
+    aggregate * 30 -
+    bump * 48 -
+    maxH * 150 -
+    landingY * 20 -
     danger
   );
 }
@@ -238,34 +368,41 @@ function* iterDrops(board: Board, spec: PieceSpec): Generator<ActivePiece> {
   }
 }
 
+function scoreDrop(board: Board, dropped: ActivePiece): {
+  placement: Placement;
+  after: Board;
+  cleared: number;
+} {
+  const { board: after, cleared } = simulateLock(board, dropped);
+  const score = evaluateBoard(board, after, cleared, dropped.y, dropped);
+  return {
+    placement: {
+      rotation: dropped.rotation,
+      x: dropped.x,
+      z: dropped.z,
+      y: dropped.y,
+      score,
+    },
+    after,
+    cleared,
+  };
+}
+
 function bestImmediate(
   board: Board,
   spec: PieceSpec,
 ): { placement: Placement; after: Board; cleared: number } | null {
   let best: { placement: Placement; after: Board; cleared: number } | null = null;
   for (const dropped of iterDrops(board, spec)) {
-    const { board: after, cleared } = simulateLock(board, dropped);
-    const score = evaluateBoard(after, cleared, dropped.y, dropped);
-    if (!best || score > best.placement.score) {
-      best = {
-        placement: {
-          rotation: dropped.rotation,
-          x: dropped.x,
-          z: dropped.z,
-          y: dropped.y,
-          score,
-        },
-        after,
-        cleared,
-      };
-    }
+    const cand = scoreDrop(board, dropped);
+    if (!best || cand.placement.score > best.placement.score) best = cand;
   }
   return best;
 }
 
 /**
  * Search rotations × footprint for the best drop.
- * Uses a survival-first heuristic and one-ply look-ahead on the next piece.
+ * Avoids stacking flat pieces into walls; spreads vertical strips into low columns.
  */
 export function findBestPlacement(
   board: Board,
@@ -278,27 +415,14 @@ export function findBestPlacement(
   const candidates: Array<{ placement: Placement; after: Board; cleared: number }> = [];
 
   for (const dropped of iterDrops(board, current)) {
-    const { board: after, cleared } = simulateLock(board, dropped);
-    const score = evaluateBoard(after, cleared, dropped.y, dropped);
-    candidates.push({
-      placement: {
-        rotation: dropped.rotation,
-        x: dropped.x,
-        z: dropped.z,
-        y: dropped.y,
-        score,
-      },
-      after,
-      cleared,
-    });
+    candidates.push(scoreDrop(board, dropped));
   }
 
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => b.placement.score - a.placement.score);
 
-  // Look-ahead on top candidates only (keeps mobile FPS stable).
-  const topN = next ? Math.min(8, candidates.length) : 1;
+  const topN = next ? Math.min(10, candidates.length) : 1;
   let best: Placement | null = null;
 
   for (let i = 0; i < topN; i++) {
@@ -307,10 +431,9 @@ export function findBestPlacement(
     if (next) {
       const follow = bestImmediate(c.after, next);
       if (follow) {
-        // Blend in successor board quality (already includes its clear bonus).
-        total = c.placement.score * 0.55 + follow.placement.score * 0.85;
+        total = c.placement.score * 0.5 + follow.placement.score * 0.9;
       } else {
-        total -= 5000; // next piece cannot be placed — avoid
+        total -= 5000;
       }
     }
     if (!best || total > best.score) {
