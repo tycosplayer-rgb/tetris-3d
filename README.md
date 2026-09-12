@@ -52,4 +52,6 @@ Keyboard also supports WASD / arrows for camera-aligned moves and **X / Z / K** 
 
 ## License
 
+Copyright (C) 2026 tycosplayer-rgb
+
 [GPL-3.0](./LICENSE) — see also [NOTICE](./NOTICE).
