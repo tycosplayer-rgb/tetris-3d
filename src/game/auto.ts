@@ -237,7 +237,8 @@ function ridgeStackPenalty(piece: ActivePiece, heights: Int16Array): number {
     if (piece.plane === 'XZ' && h > 0 && h <= avg) penalty -= 25;
   }
   // Classic failure mode: whole I-bar sits on the same ridge (4 cells @ center).
-  if (piece.type === 'I' && piece.plane === 'XZ' && onMax >= 2) penalty += 1600;
+  if (piece.type === 'I' && onMax >= 2) penalty += 2200;
+  if (piece.type === 'I' && onMax >= 3) penalty += 1800;
   if (piece.plane === 'XZ' && onMax >= 3) penalty += 1200;
   return penalty;
 }
@@ -301,6 +302,60 @@ function wellColumns(heights: Int16Array): Set<string> {
   return wells;
 }
 
+
+/**
+ * Lying I-bar scoring. The screenshot failure mode is stacking flat bars on the
+ * same footprint into a "skyscraper" of horizontal planks — crush that hard.
+ */
+function scoreFlatIBar(
+  before: Board,
+  _piece: ActivePiece,
+  cells: { x: number; y: number; z: number }[],
+  heights: Int16Array,
+  _maxH: number,
+  avg: number,
+): number {
+  const cols = new Map<string, number>();
+  for (const c of cells) {
+    const key = `${c.x},${c.z}`;
+    if (!cols.has(key)) cols.set(key, heights[c.z * SIZE + c.x]);
+  }
+  const colHs = [...cols.values()];
+  const minCol = Math.min(...colHs);
+  const maxCol = Math.max(...colHs);
+  const landingY = Math.min(...cells.map((c) => c.y));
+
+  let emptyLow = 0;
+  let onFilled = 0;
+  for (const c of cells) {
+    if (before.cells[c.y][c.z][c.x] === null && c.y <= 1) emptyLow++;
+    if (c.y > 0 && before.cells[c.y - 1][c.z][c.x] !== null) onFilled++;
+  }
+
+  let score = emptyLow * 140;
+
+  // Same-height shelf under the whole bar and landing on it ⇒ lying stack / wall tower.
+  if (cols.size >= 3 && minCol >= 1 && maxCol === minCol && landingY === minCol) {
+    score -= 3200 + minCol * 500;
+  }
+  // Nearly the same: bar rests entirely on already-filled columns.
+  if (cols.size >= 3 && minCol >= 1 && onFilled >= cells.length) {
+    score -= 2400 + minCol * 350;
+  }
+  // Any climb above the lowest incomplete floor while empty cells remain elsewhere.
+  if (landingY >= 2) score -= 1200 * landingY;
+  if (minCol >= 3) score -= 2000;
+  if (minCol >= Math.max(2, Math.floor(avg)) && emptyLow === 0) score -= 1500;
+
+  // Reward only spreading into still-empty footprint at the bottom.
+  for (const h of colHs) {
+    if (h === 0) score += 100;
+    else if (h <= 1 && landingY <= 1) score += 40;
+  }
+
+  return score;
+}
+
 /**
  * I-piece policy (anti-skyscraper):
  * - Vertical I only to fill a *shallow* well up toward neighbors — never grow a tower.
@@ -355,34 +410,12 @@ function longBarBonus(before: Board, piece: ActivePiece, heights: Int16Array): n
     }
 
     if (isFlatBar) {
-      // Prefer flat fill of low empty cells; don't force vertical when towers exist.
-      let emptyLow = 0;
-      let onTall = 0;
-      for (const c of cells) {
-        if (c.y <= 1 && before.cells[c.y][c.z][c.x] === null) emptyLow++;
-        const colH = heights[c.z * SIZE + c.x];
-        if (colH >= Math.max(2, maxH - 1)) onTall++;
-      }
-      let score = emptyLow * 120;
-      if (Math.min(...ys) >= 2) score -= 900;
-      if (onTall >= 3) score -= 1500;
-      // If board already has a tower, flat low fill is better than another vertical.
-      if (maxH >= 4) score += 400;
-      return score;
+      return scoreFlatIBar(before, piece, cells, heights, maxH, avg);
     }
   }
 
   if (piece.plane === 'XZ' && isFlatBar) {
-    let emptyLow = 0;
-    let onTall = 0;
-    for (const c of cells) {
-      if (c.y <= 1 && before.cells[c.y][c.z][c.x] === null) emptyLow++;
-      if (heights[c.z * SIZE + c.x] >= Math.max(2, maxH - 1)) onTall++;
-    }
-    let score = emptyLow * 110;
-    if (Math.min(...ys) >= 2) score -= 1000;
-    if (onTall >= 3) score -= 1800;
-    return score;
+    return scoreFlatIBar(before, piece, cells, heights, maxH, avg);
   }
 
   return 0;
