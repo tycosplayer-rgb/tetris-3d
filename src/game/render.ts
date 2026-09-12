@@ -143,7 +143,7 @@ export class GameRenderer {
     // Stronger downward bias: push the well down so the top clears the HUD
     // and the empty floor band under the well shrinks.
     // Previous low framing used ~14% downward bias; subtract 5px to sit just above the buttons.
-    const shiftY = Math.max(0, Math.round(h * 0.14) - 5);
+    const shiftY = Math.max(0, Math.round(h * 0.14) - 15);
     this.camera.setViewOffset(w, h + shiftY, 0, 0, w, h);
     this.camera.updateProjectionMatrix();
   }
