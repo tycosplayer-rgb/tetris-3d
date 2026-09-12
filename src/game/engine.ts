@@ -152,7 +152,7 @@ export class Engine {
       this.stats.score += scoreForLines(cleared, this.stats.level);
       this.updateSpeed();
     }
-    this.stats.score += 10;
+    // Score only from cleared layers — locking a piece alone does not add points.
     if (!this.spawn()) {
       // game over already set in spawn
     }

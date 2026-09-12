@@ -15,7 +15,9 @@ export class GameRenderer {
   private readonly activeGroup = new THREE.Group();
   private readonly ghostGroup = new THREE.Group();
   private readonly geo = new THREE.BoxGeometry(CELL - GAP, CELL - GAP, CELL - GAP);
-  private readonly edgeGeo = new THREE.BoxGeometry(CELL, CELL, CELL);
+  private readonly edgeBox = new THREE.BoxGeometry(CELL, CELL, CELL);
+  /** Shared edge lines — must NOT create a new EdgesGeometry per cube (leaks VRAM). */
+  private readonly edgesGeo = new THREE.EdgesGeometry(this.edgeBox);
   private readonly materials = new Map<PieceType, THREE.MeshStandardMaterial>();
   private readonly edgeMat = new THREE.LineBasicMaterial({
     color: 0x000000,
@@ -148,6 +150,7 @@ export class GameRenderer {
     while (group.children.length) {
       const obj = group.children.pop()!;
       group.remove(obj);
+      // Shared geometries/materials stay; only drop the Object3D wrapper for GC.
     }
   }
 
@@ -158,7 +161,7 @@ export class GameRenderer {
     group.add(mesh);
 
     if (!ghost) {
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(this.edgeGeo), this.edgeMat);
+      const edges = new THREE.LineSegments(this.edgesGeo, this.edgeMat);
       edges.position.copy(mesh.position);
       group.add(edges);
     }
@@ -199,7 +202,8 @@ export class GameRenderer {
   dispose(): void {
     this.renderer.dispose();
     this.geo.dispose();
-    this.edgeGeo.dispose();
+    this.edgeBox.dispose();
+    this.edgesGeo.dispose();
     this.ghostMat.dispose();
     this.edgeMat.dispose();
     for (const m of this.materials.values()) m.dispose();

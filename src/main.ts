@@ -30,12 +30,15 @@ let autoMode = false;
 let autoTarget: Placement | null = null;
 let autoPieceKey = '';
 let autoAcc = 0;
-const AUTO_STEP_MS = 55;
+const AUTO_STEP_MS = 70;
+/** Prevent a catch-up storm (and AI search storm) after a long frame. */
+const AUTO_MAX_STEPS_PER_FRAME = 2;
 
-function pieceKey(): string {
+function pieceSpawnKey(): string {
   const a = engine.active;
   if (!a) return '';
-  return `${a.type}:${a.plane}:${engine.stats.lines}:${engine.stats.score}`;
+  // Stable for one falling piece: type/plane + lines/score change only after lock.
+  return `${a.type}:${a.plane}:L${engine.stats.lines}:S${engine.stats.score}`;
 }
 
 function updateHud(): void {
@@ -136,9 +139,14 @@ function ensureAutoTarget(): void {
     autoPieceKey = '';
     return;
   }
-  const key = pieceKey();
+  const key = pieceSpawnKey();
   if (autoTarget && autoPieceKey === key) return;
-  autoTarget = findBestPlacement(engine.board, a.type, a.plane, engine.stats.level);
+  try {
+    autoTarget = findBestPlacement(engine.board, a.type, a.plane, engine.stats.level);
+  } catch (err) {
+    console.error('auto plan failed', err);
+    autoTarget = null;
+  }
   autoPieceKey = key;
 }
 
@@ -277,11 +285,23 @@ function frame(now: number): void {
   if (engine.phase === 'playing') {
     if (autoMode) {
       autoAcc += dt;
-      while (autoAcc >= AUTO_STEP_MS) {
+      let steps = 0;
+      while (autoAcc >= AUTO_STEP_MS && steps < AUTO_MAX_STEPS_PER_FRAME) {
         autoAcc -= AUTO_STEP_MS;
+        steps++;
         if (engine.phase !== 'playing') break;
-        autoStep();
+        try {
+          autoStep();
+        } catch (err) {
+          console.error('auto step failed', err);
+          setAutoMode(false);
+          break;
+        }
         if (engine.phase !== 'playing') break;
+      }
+      // Drop excess catch-up time so we never burst-plan dozens of pieces in one frame.
+      if (autoAcc > AUTO_STEP_MS * AUTO_MAX_STEPS_PER_FRAME) {
+        autoAcc = 0;
       }
     } else {
       const interval = softDropping ? Math.min(80, engine.dropMs / 8) : engine.dropMs;
