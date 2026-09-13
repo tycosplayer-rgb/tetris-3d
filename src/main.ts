@@ -31,10 +31,11 @@ let lastT = performance.now();
 let needsSync = true;
 
 /**
- * manual | semi (CPU until I) | full (CPU always) | train (I-only CPU).
- * semi/train kept in code for later debugging; hidden from the cycle for now.
+ * manual | semi | full (instant auto) | autoGrav (auto + natural gravity) |
+ * train | stack.
+ * semi/train/stack stay behind SHOW_DEBUG_PLAY_MODES.
  */
-type PlayMode = 'manual' | 'semi' | 'full' | 'train' | 'stack';
+type PlayMode = 'manual' | 'semi' | 'full' | 'autoGrav' | 'train' | 'stack';
 /** Flip true to put 半自动 / 自动训练 / 垒 back in the button cycle. */
 const SHOW_DEBUG_PLAY_MODES = false;
 let playMode: PlayMode = 'manual';
@@ -67,7 +68,9 @@ function updateHud(): void {
           ? '半自动'
           : playMode === 'full'
             ? '自动'
-            : '自动训练';
+            : playMode === 'autoGrav'
+              ? '自动重力'
+              : '自动训练';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -146,11 +149,13 @@ function togglePause(): void {
         ? '半自动已暂停'
         : playMode === 'full'
           ? '自动已暂停'
-          : playMode === 'train'
-            ? '自动训练已暂停（仅长条）'
-            : playMode === 'stack'
-              ? '垒模式已暂停（无重力，软降/硬降放置）'
-              : 'Swipe · Tap rotate · Flip button';
+          : playMode === 'autoGrav'
+            ? '自动重力已暂停'
+            : playMode === 'train'
+              ? '自动训练已暂停（仅长条）'
+              : playMode === 'stack'
+                ? '垒模式已暂停（无重力，软降/硬降放置）'
+                : 'Swipe · Tap rotate · Flip button';
     showOverlay('Paused', pauseHint, 'Resume');
     btnPause.textContent = 'Resume';
   } else {
@@ -183,7 +188,22 @@ function maybeGameOver(): void {
 }
 
 function isCpuPlaying(): boolean {
+  return (
+    playMode === 'semi' ||
+    playMode === 'full' ||
+    playMode === 'autoGrav' ||
+    playMode === 'train'
+  );
+}
+
+/** Classic auto: adjust then hard-drop (no natural gravity). */
+function isInstantAuto(): boolean {
   return playMode === 'semi' || playMode === 'full' || playMode === 'train';
+}
+
+/** Auto + natural gravity while adjusting (isolated from instant auto). */
+function isGravityAuto(): boolean {
+  return playMode === 'autoGrav';
 }
 
 function setPlayMode(mode: PlayMode): void {
@@ -205,8 +225,8 @@ function setPlayMode(mode: PlayMode): void {
 
 function cyclePlayMode(): void {
   const order: PlayMode[] = SHOW_DEBUG_PLAY_MODES
-    ? ['manual', 'semi', 'full', 'train', 'stack']
-    : ['manual', 'full'];
+    ? ['manual', 'semi', 'full', 'autoGrav', 'train', 'stack']
+    : ['manual', 'full', 'autoGrav'];
   // If we were left in a hidden debug mode, jump back into the public cycle.
   const i = order.indexOf(playMode);
   const next = order[i < 0 ? 0 : (i + 1) % order.length]!;
@@ -250,9 +270,9 @@ function ensureAutoTarget(): void {
   autoPieceKey = key;
 }
 
-/** One auto step: rotate / slide / hard-drop toward best placement. */
+/** Instant-auto step only: flip / rotate / slide, then hard-drop. No natural gravity. */
 function autoStep(): void {
-  if (!isCpuPlaying() || engine.phase !== 'playing' || !engine.active) return;
+  if (!isInstantAuto() || engine.phase !== 'playing' || !engine.active) return;
   if (handoffLongBarIfNeeded()) return;
   ensureAutoTarget();
   const a = engine.active;
@@ -311,6 +331,61 @@ function autoStep(): void {
   autoTarget = null;
   autoPieceKey = '';
 }
+
+/**
+ * Gravity-auto step (isolated from autoStep): only flip / rotate / slide.
+ * Never hard-drops — natural gravity in the frame loop locks the piece.
+ * Soft-drop only for headroom or when a slide is blocked.
+ */
+function autoStepGravity(): void {
+  if (!isGravityAuto() || engine.phase !== 'playing' || !engine.active) return;
+  ensureAutoTarget();
+  const a = engine.active;
+  const t = autoTarget;
+  if (!t) {
+    engine.softDrop();
+    needsSync = true;
+    return;
+  }
+
+  if (a.plane !== t.plane) {
+    if (!engine.tryFlip()) {
+      engine.softDrop();
+    }
+    needsSync = true;
+    return;
+  }
+
+  if (a.rotation !== t.rotation) {
+    if (!engine.tryRotate()) {
+      engine.softDrop();
+    }
+    needsSync = true;
+    return;
+  }
+
+  const dx = Math.sign(t.x - a.x);
+  const dz = Math.sign(t.z - a.z);
+  if (dx !== 0 || dz !== 0) {
+    let moved = false;
+    if (Math.abs(t.x - a.x) >= Math.abs(t.z - a.z)) {
+      if (dx !== 0) moved = engine.tryMove(dx, 0, 0);
+      if (!moved && dz !== 0) moved = engine.tryMove(0, 0, dz);
+    } else {
+      if (dz !== 0) moved = engine.tryMove(0, 0, dz);
+      if (!moved && dx !== 0) moved = engine.tryMove(dx, 0, 0);
+    }
+    if (!moved) {
+      engine.softDrop();
+    }
+    needsSync = true;
+    return;
+  }
+
+  // Fully aligned: let gravity finish the drop (no hard-drop).
+  needsSync = true;
+}
+
 
 const input = new InputController(canvas, {
   onMove: move,
@@ -404,7 +479,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  'Swipe · Tap rotate · Flip · 按钮切换手动/自动',
+  'Swipe · Tap · Flip · 按钮：手动 / 自动 / 自动重力',
   'Start',
 );
 syncView();
@@ -414,7 +489,43 @@ function frame(now: number): void {
   lastT = now;
 
   if (engine.phase === 'playing') {
-    if (isCpuPlaying()) {
+    if (isGravityAuto()) {
+      // Natural gravity (same cadence as manual).
+      const interval = engine.dropMs;
+      dropAcc += dt;
+      while (dropAcc >= interval) {
+        dropAcc -= interval;
+        if (engine.phase !== 'playing') break;
+        const grav = engine.tickGravity();
+        needsSync = true;
+        if (grav.locked) {
+          autoTarget = null;
+          autoPieceKey = '';
+          playLockOrClear(grav.cleared);
+          maybeGameOver();
+        }
+        if (engine.phase !== 'playing') break;
+      }
+      // Adjust pose while falling — never hard-drop here.
+      autoAcc += dt;
+      let steps = 0;
+      while (autoAcc >= AUTO_STEP_MS && steps < AUTO_MAX_STEPS_PER_FRAME) {
+        autoAcc -= AUTO_STEP_MS;
+        steps++;
+        if (engine.phase !== 'playing') break;
+        try {
+          autoStepGravity();
+        } catch (err) {
+          console.error('auto gravity step failed', err);
+          setPlayMode('manual');
+          break;
+        }
+        if (engine.phase !== 'playing') break;
+      }
+      if (autoAcc > AUTO_STEP_MS * AUTO_MAX_STEPS_PER_FRAME) {
+        autoAcc = 0;
+      }
+    } else if (isInstantAuto()) {
       if (handoffLongBarIfNeeded()) {
         // paused + manual; fall through to sync
       } else {
