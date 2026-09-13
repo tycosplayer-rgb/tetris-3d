@@ -333,9 +333,10 @@ function autoStep(): void {
 }
 
 /**
- * Gravity-auto step (isolated from autoStep): only flip / rotate / slide.
- * Never hard-drops — natural gravity in the frame loop locks the piece.
- * Soft-drop only for headroom or when a slide is blocked.
+ * Gravity-auto step (isolated from autoStep): flip / rotate / slide while
+ * natural gravity runs in the frame loop (same dropMs as manual / level).
+ * Once aligned, hard-drop immediately — same end as instant auto.
+ * Soft-drop only for headroom or when a slide is blocked mid-adjust.
  */
 function autoStepGravity(): void {
   if (!isGravityAuto() || engine.phase !== 'playing' || !engine.active) return;
@@ -382,8 +383,10 @@ function autoStepGravity(): void {
     return;
   }
 
-  // Fully aligned: let gravity finish the drop (no hard-drop).
-  needsSync = true;
+  // Fully aligned early: hard-drop like instant auto (gravity only matters while adjusting).
+  doHardDrop(false);
+  autoTarget = null;
+  autoPieceKey = '';
 }
 
 
