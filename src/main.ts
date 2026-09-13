@@ -34,7 +34,7 @@ let needsSync = true;
  * manual | semi (CPU until I) | full (CPU always) | train (I-only CPU).
  * semi/train kept in code for later debugging; hidden from the cycle for now.
  */
-type PlayMode = 'manual' | 'semi' | 'full' | 'train';
+type PlayMode = 'manual' | 'semi' | 'full' | 'train' | 'stack';
 /** Flip true to put 半自动 / 自动训练 back in the button cycle. */
 const SHOW_DEBUG_PLAY_MODES = false;
 let playMode: PlayMode = 'manual';
@@ -57,16 +57,17 @@ function updateHud(): void {
   linesEl.textContent = String(engine.stats.lines);
   levelEl.textContent = String(engine.stats.level);
   nextEl.textContent = engine.nextLabel();
-  const cpu = playMode !== 'manual';
-  btnAuto.classList.toggle('active', cpu);
+  btnAuto.classList.toggle('active', playMode !== 'manual');
   btnAuto.textContent =
     playMode === 'manual'
       ? '手动'
-      : playMode === 'semi'
-        ? '半自动'
-        : playMode === 'full'
-          ? '自动'
-          : '自动训练';
+      : playMode === 'stack'
+        ? '垒'
+        : playMode === 'semi'
+          ? '半自动'
+          : playMode === 'full'
+            ? '自动'
+            : '自动训练';
 }
 
 function showOverlay(title: string, msg: string, button = 'Start'): void {
@@ -147,7 +148,9 @@ function togglePause(): void {
           ? '自动已暂停'
           : playMode === 'train'
             ? '自动训练已暂停（仅长条）'
-            : 'Swipe · Tap rotate · Flip button';
+            : playMode === 'stack'
+              ? '垒模式已暂停（无重力，软降/硬降放置）'
+              : 'Swipe · Tap rotate · Flip button';
     showOverlay('Paused', pauseHint, 'Resume');
     btnPause.textContent = 'Resume';
   } else {
@@ -202,12 +205,16 @@ function setPlayMode(mode: PlayMode): void {
 
 function cyclePlayMode(): void {
   const order: PlayMode[] = SHOW_DEBUG_PLAY_MODES
-    ? ['manual', 'semi', 'full', 'train']
-    : ['manual', 'full'];
+    ? ['manual', 'semi', 'full', 'train', 'stack']
+    : ['manual', 'stack', 'full'];
   // If we were left in a hidden debug mode, jump back into the public cycle.
   const i = order.indexOf(playMode);
   const next = order[i < 0 ? 0 : (i + 1) % order.length]!;
   setPlayMode(next);
+}
+
+function isStackMode(): boolean {
+  return playMode === 'stack';
 }
 
 /** Semi-auto only: on I (long bar), pause and switch to manual. */
@@ -397,7 +404,7 @@ document.addEventListener(
 
 showOverlay(
   '3D Tetris',
-  'Swipe move · Tap rotate · Flip · 按钮切换手动/自动',
+  'Swipe · Tap rotate · Flip · 按钮：手动 / 垒 / 自动',
   'Start',
 );
 syncView();
@@ -430,6 +437,25 @@ function frame(now: number): void {
         if (autoAcc > AUTO_STEP_MS * AUTO_MAX_STEPS_PER_FRAME) {
           autoAcc = 0;
         }
+      }
+    } else if (isStackMode()) {
+      // 垒模式：自然降落速度为 0；仅按住软降时才下落。
+      if (softDropping) {
+        const interval = Math.min(80, engine.dropMs / 8);
+        dropAcc += dt;
+        while (dropAcc >= interval) {
+          dropAcc -= interval;
+          if (engine.phase !== 'playing') break;
+          const grav = engine.tickGravity();
+          needsSync = true;
+          if (grav.locked) {
+            playLockOrClear(grav.cleared);
+            maybeGameOver();
+          }
+          if (engine.phase !== 'playing') break;
+        }
+      } else {
+        dropAcc = 0;
       }
     } else {
       const interval = softDropping ? Math.min(80, engine.dropMs / 8) : engine.dropMs;
